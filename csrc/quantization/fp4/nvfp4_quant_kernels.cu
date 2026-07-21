@@ -31,14 +31,15 @@
 
 namespace vllm {
 
-// Use UE4M3 by default.
-template <class Type, bool UE8M0_SF = false>
+// Use UE4M3 by default, SF_VEC_SIZE=16 by default (NVFP4).
+// MXFP4 callers pass SF_VEC_SIZE=32.
+template <class Type, bool UE8M0_SF = false, int SF_VEC_SIZE = 16>
 __global__ void __launch_bounds__(512, VLLM_BLOCKS_PER_SM(512))
     cvt_fp16_to_fp4(int32_t numRows, int32_t numCols, Type const* in,
                     float const* SFScale, uint32_t* out, uint32_t* SFout) {
   using PackedVec = PackedVec<Type>;
   static constexpr int CVT_FP4_NUM_THREADS_PER_SF =
-      (CVT_FP4_SF_VEC_SIZE / CVT_FP4_ELTS_PER_THREAD);
+      (SF_VEC_SIZE / CVT_FP4_ELTS_PER_THREAD);
   static_assert(sizeof(PackedVec) == sizeof(Type) * CVT_FP4_ELTS_PER_THREAD,
                 "Vec size is not matched.");
 
@@ -60,11 +61,13 @@ __global__ void __launch_bounds__(512, VLLM_BLOCKS_PER_SM(512))
 
       auto sf_out =
           cvt_quant_to_fp4_get_sf_out_offset<uint32_t,
-                                             CVT_FP4_NUM_THREADS_PER_SF>(
+                                             CVT_FP4_NUM_THREADS_PER_SF,
+                                             SF_VEC_SIZE>(
               rowIdx, colIdx, numCols, SFout);
 
       out_pos =
-          cvt_warp_fp16_to_fp4<Type, UE8M0_SF>(in_vec, SFScaleVal, sf_out);
+          cvt_warp_fp16_to_fp4<Type, UE8M0_SF, SF_VEC_SIZE>(
+              in_vec, SFScaleVal, sf_out);
     }
   }
 }
@@ -106,6 +109,28 @@ template void invokeFP4Quantization(int m, int n, __nv_bfloat16 const* input,
                                     int multiProcessorCount,
                                     cudaStream_t stream);
 
+// MXFP4 quantization: UE8M0 scales, SF_VEC_SIZE=32, no global scale.
+template <typename T>
+void invokeMXFP4Quantization(int m, int n, T const* input,
+                              int64_t* output, int32_t* SFOutput,
+                              int multiProcessorCount, cudaStream_t stream) {
+  dim3 block(std::min(int(n / ELTS_PER_THREAD), 512));
+  int const numBlocksPerSM =
+      vllm_runtime_blocks_per_sm(static_cast<int>(block.x));
+  dim3 grid(std::min(int(m), multiProcessorCount * numBlocksPerSM));
+
+  // UE8M0_SF=true, SF_VEC_SIZE=32, SFScale=nullptr (no global scale)
+  cvt_fp16_to_fp4<T, true, 32><<<grid, block, 0, stream>>>(
+      m, n, input, nullptr, reinterpret_cast<uint32_t*>(output),
+      reinterpret_cast<uint32_t*>(SFOutput));
+}
+
+// Explicit instantiations for MXFP4.
+template void invokeMXFP4Quantization(int, int, half const*, int64_t*,
+                                       int32_t*, int, cudaStream_t);
+template void invokeMXFP4Quantization(int, int, __nv_bfloat16 const*, int64_t*,
+                                       int32_t*, int, cudaStream_t);
+
 }  // namespace vllm
 
 void scaled_fp4_quant_sm1xxa(torch::Tensor const& output,
@@ -137,5 +162,32 @@ void scaled_fp4_quant_sm1xxa(torch::Tensor const& output,
     auto input_ptr = static_cast<cuda_type const*>(input.data_ptr());
     vllm::invokeFP4Quantization(m, n, input_ptr, input_sf_ptr, output_ptr,
                                 sf_out, useUE8M0, multiProcessorCount, stream);
+  });
+}
+
+void scaled_mxfp4_quant_sm1xxa(torch::Tensor const& output,
+                                torch::Tensor const& input,
+                                torch::Tensor const& output_sf) {
+  int32_t m = input.size(0);
+  int32_t n = input.size(1);
+
+  TORCH_CHECK(n % 32 == 0, "The N dimension must be multiple of 32 for MXFP4.");
+  TORCH_CHECK(input.scalar_type() == at::ScalarType::Half ||
+                  input.scalar_type() == at::ScalarType::BFloat16,
+              "Unsupported input data type for MXFP4 quantization.");
+
+  int multiProcessorCount =
+      get_device_attribute(cudaDevAttrMultiProcessorCount, -1);
+
+  auto sf_out = static_cast<int32_t*>(output_sf.data_ptr());
+  auto output_ptr = static_cast<int64_t*>(output.data_ptr());
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(input));
+  auto stream = at::cuda::getCurrentCUDAStream(input.get_device());
+
+  VLLM_DISPATCH_HALF_TYPES(input.scalar_type(), "mxfp4_quant_kernel", [&] {
+    using cuda_type = vllm::CUDATypeConverter<scalar_t>::Type;
+    auto input_ptr = static_cast<cuda_type const*>(input.data_ptr());
+    vllm::invokeMXFP4Quantization(m, n, input_ptr, output_ptr,
+                                   sf_out, multiProcessorCount, stream);
   });
 }

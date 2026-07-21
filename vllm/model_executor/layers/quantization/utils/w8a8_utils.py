@@ -9,12 +9,15 @@ from packaging import version
 from vllm import _custom_ops as ops
 from vllm import envs
 from vllm.config import CompilationLevel, get_current_vllm_config
+from vllm.logger import init_logger
 from vllm.model_executor.layers.quantization.input_quant_fp8 import QuantFP8
 from vllm.model_executor.layers.quantization.utils.quant_utils import (
     GroupShape)
 from vllm.platforms import current_platform
 from vllm.utils import direct_register_custom_op
 from vllm.utils.flashinfer import flashinfer_scaled_fp8_mm, has_flashinfer
+
+logger = init_logger(__name__)
 
 # Input scaling factors are no longer optional in _scaled_mm starting
 # from pytorch 2.5. Allocating a dummy tensor to pass as input_scale
@@ -155,6 +158,43 @@ def cutlass_w8a8_scaled_mm(*, qinput: torch.Tensor, weight: torch.Tensor,
                                    scale_a=scale_a,
                                    scale_b=scale_b,
                                    bias=bias)
+    return output.view(*output_shape)
+
+
+def mma_emu_w8a8_scaled_mm(*, qinput: torch.Tensor, weight: torch.Tensor,
+                           out_dtype: torch.dtype, scale_a: torch.Tensor,
+                           scale_b: torch.Tensor, bias: torch.Tensor,
+                           output_shape: list,
+                           algorithm: Optional[str] = None,
+                           f_bits: Optional[int] = None,
+                           g_bits: Optional[int] = None,
+                           group_size: Optional[int] = None,
+                           chunk_size: Optional[int] = None,
+                           **kwargs) -> torch.Tensor:
+    """
+    FP8 matmul under an emulated MMA accumulation configuration.
+
+    Only per-tensor scales are supported: scale_a and scale_b must be scalar
+    tensors.
+
+    Args:
+        algorithm: accumulation algorithm
+        f_bits: fractional bits of the accumulator
+        g_bits: intra-group accumulator bits (GDFS)
+        group_size: elements per group (GDFS)
+        chunk_size: products per chunk (CoFDA)
+    """
+    output = ops.mma_emu_scaled_fp8_mm(qinput,
+                                       weight,
+                                       out_dtype=out_dtype,
+                                       scale_a=scale_a,
+                                       scale_b=scale_b,
+                                       bias=bias,
+                                       algorithm=algorithm,
+                                       f_bits=f_bits,
+                                       g_bits=g_bits,
+                                       group_size=group_size,
+                                       chunk_size=chunk_size)
     return output.view(*output_shape)
 
 
@@ -328,7 +368,22 @@ def dispatch_w8a8_scaled_mm(
             return flashinfer_w8a8_scaled_mm
         if preferred_backend == "cutlass":
             return cutlass_w8a8_scaled_mm
+        if preferred_backend == "mma_emu":
+            return mma_emu_w8a8_scaled_mm
         return torch_per_tensor_w8a8_scaled_mm
+
+    # The emulation kernel only implements per-tensor scales. Falling back to
+    # the native kernel here would silently produce native results for a run
+    # the caller asked to emulate, so refuse instead.
+    if preferred_backend == "mma_emu":
+        raise ValueError(
+            "MMA emulation of FP8 requires per-tensor weight and activation "
+            "scales, but this checkpoint carries "
+            f"{'per-tensor' if per_tensor_weights else 'per-channel'} weight "
+            f"and "
+            f"{'per-tensor' if per_tensor_activations else 'per-token'} "
+            "activation scales. Use a statically quantized per-tensor FP8 "
+            "checkpoint, or unset VLLM_USE_MMAEMU_GEMM_FP8.")
 
     # cutlass_scaled_mm supports per tensor/channel W and per tensor/token A
     if preferred_backend == "cutlass" or preferred_backend == "flashinfer":
@@ -367,6 +422,39 @@ class Fp8LinearOp:
                 self.preferred_backend = "cutlass"
         else:
             self.preferred_backend = "torch"
+
+        # Route the FP8 GEMM through the emulation kernel when asked to. The
+        # parameters are read once here: reading config inside forward is not
+        # allowed.
+        if envs.VLLM_USE_MMAEMU_GEMM_FP8:
+            if not (current_platform.is_cuda()
+                    and current_platform.has_device_capability(89)):
+                raise ValueError(
+                    "VLLM_USE_MMAEMU_GEMM_FP8 is set, but FP8 emulation "
+                    "requires a CUDA device of compute capability 8.9 or "
+                    "later.")
+            self.preferred_backend = "mma_emu"
+            self.mma_emu_algorithm = envs.VLLM_MMAEMU_FP8_ALGORITHM
+            self.mma_emu_f_bits = envs.VLLM_MMAEMU_FP8_F_BITS
+            self.mma_emu_g_bits = envs.VLLM_MMAEMU_FP8_G_BITS
+            self.mma_emu_group_size = envs.VLLM_MMAEMU_FP8_GROUP_SIZE
+            self.mma_emu_chunk_size = envs.VLLM_MMAEMU_FP8_CHUNK_SIZE
+
+            if self.mma_emu_algorithm == "gdfs":
+                logger.info_once(
+                    "Emulating FP8 MMA accumulation: algorithm=%s, f_bits=%d, "
+                    "g_bits=%d, group_size=%d", self.mma_emu_algorithm,
+                    self.mma_emu_f_bits, self.mma_emu_g_bits,
+                    self.mma_emu_group_size)
+            elif self.mma_emu_algorithm in ("cofda", "cofda_decoupled"):
+                logger.info_once(
+                    "Emulating FP8 MMA accumulation: algorithm=%s, f_bits=%d, "
+                    "chunk_size=%d", self.mma_emu_algorithm,
+                    self.mma_emu_f_bits, self.mma_emu_chunk_size)
+            else:
+                logger.info_once(
+                    "Emulating FP8 MMA accumulation: algorithm=%s",
+                    self.mma_emu_algorithm)
 
         # Note: we pad the input because torch._scaled_mm is more performant
         # for matrices with batch dimension > 16.
@@ -425,13 +513,24 @@ class Fp8LinearOp:
                                                       per_tensor_weights,
                                                       per_tensor_activations)
 
+        mma_emu_kwargs = {}
+        if self.preferred_backend == "mma_emu":
+            mma_emu_kwargs = {
+                "algorithm": self.mma_emu_algorithm,
+                "f_bits": self.mma_emu_f_bits,
+                "g_bits": self.mma_emu_g_bits,
+                "group_size": self.mma_emu_group_size,
+                "chunk_size": self.mma_emu_chunk_size,
+            }
+
         return w8a8_scaled_mm_func(qinput=qinput,
                                    weight=weight,
                                    out_dtype=out_dtype,
                                    scale_a=x_scale,
                                    scale_b=weight_scale,
                                    bias=bias,
-                                   output_shape=output_shape)
+                                   output_shape=output_shape,
+                                   **mma_emu_kwargs)
 
 
 def normalize_e4m3fn_to_e4m3fnuz(

@@ -305,6 +305,7 @@ if(VLLM_GPU_LANG STREQUAL "CUDA")
     "csrc/quantization/cutlass_w8a8/scaled_mm_entry.cu"
     "csrc/quantization/fp4/nvfp4_quant_entry.cu"
     "csrc/quantization/fp4/nvfp4_scaled_mm_entry.cu"
+    "csrc/quantization/fp4/mxfp4_scaled_mm_entry.cu"
     "csrc/quantization/fp4/nvfp4_blockwise_moe_kernel.cu"
     "csrc/sparse/cutlass/sparse_scaled_mm_entry.cu"
     "csrc/cutlass_extensions/common.cpp"
@@ -438,6 +439,59 @@ if(VLLM_GPU_LANG STREQUAL "CUDA")
   endif()
 
 
+  # MMA-Emu FP8 GEMM kernels require SM89+ (Ada Lovelace / Hopper and newer)
+  # FP8 MMA instructions are only available on SM89+
+  cuda_archs_loose_intersection(MMAEMU_FP8_ARCHS "8.9;9.0;9.0a;10.0;10.0a;12.0;12.0a" "${CUDA_ARCHS}")
+  if(MMAEMU_FP8_ARCHS)
+    set(MMAEMU_SRCS
+      "csrc/quantization/mma_emu/fp8_gemm_kernels.cu")
+    set_gencode_flags_for_srcs(
+      SRCS "${MMAEMU_SRCS}"
+      CUDA_ARCHS "${MMAEMU_FP8_ARCHS}")
+    list(APPEND VLLM_EXT_SRC "${MMAEMU_SRCS}")
+    list(APPEND VLLM_GPU_FLAGS "-DENABLE_MMAEMU_FP8=1")
+    message(STATUS "Building MMA-Emu FP8 kernels for archs: ${MMAEMU_FP8_ARCHS}")
+  else()
+    message(STATUS "Not building MMA-Emu FP8 kernels as no compatible archs found "
+                   "(requires SM89+: Ada Lovelace, Hopper, or newer)")
+  endif()
+
+  # MMA-Emu NVFP4 GEMM kernels require SM100+ (Blackwell)
+  # NVFP4 (E2M1) MMA instructions are only available on SM100+
+  # Requires CUDA 12.8+ for cuda_fp4.h header
+  cuda_archs_loose_intersection(MMAEMU_NVFP4_ARCHS "10.0;10.0a;12.0;12.0a" "${CUDA_ARCHS}")
+  if(${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER_EQUAL 12.8 AND MMAEMU_NVFP4_ARCHS)
+    set(MMAEMU_NVFP4_SRCS
+      "csrc/quantization/mma_emu/nvfp4_gemm_kernels.cu")
+    set_gencode_flags_for_srcs(
+      SRCS "${MMAEMU_NVFP4_SRCS}"
+      CUDA_ARCHS "${MMAEMU_NVFP4_ARCHS}")
+    list(APPEND VLLM_EXT_SRC "${MMAEMU_NVFP4_SRCS}")
+    list(APPEND VLLM_GPU_FLAGS "-DENABLE_MMAEMU_NVFP4=1")
+    message(STATUS "Building MMA-Emu NVFP4 kernels for archs: ${MMAEMU_NVFP4_ARCHS}")
+  else()
+    message(STATUS "Not building MMA-Emu NVFP4 kernels as no compatible archs found "
+                   "(requires SM100+: Blackwell, and CUDA 12.8+)")
+  endif()
+
+  # MMA-Emu MXFP4 (E2M1 with E8M0 block scales) GEMM kernels
+  # Same arch/CUDA requirements as MMA-Emu NVFP4
+  cuda_archs_loose_intersection(MMAEMU_MXFP4_ARCHS "10.0;10.0a;12.0;12.0a" "${CUDA_ARCHS}")
+  if(${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER_EQUAL 12.8 AND MMAEMU_MXFP4_ARCHS)
+    set(MMAEMU_MXFP4_SRCS
+      "csrc/quantization/mma_emu/mxfp4_gemm_kernels.cu")
+    set_gencode_flags_for_srcs(
+      SRCS "${MMAEMU_MXFP4_SRCS}"
+      CUDA_ARCHS "${MMAEMU_MXFP4_ARCHS}")
+    list(APPEND VLLM_EXT_SRC "${MMAEMU_MXFP4_SRCS}")
+    list(APPEND VLLM_GPU_FLAGS "-DENABLE_MMAEMU_MXFP4=1")
+    message(STATUS "Building MMA-Emu MXFP4 kernels for archs: ${MMAEMU_MXFP4_ARCHS}")
+  else()
+    message(STATUS "Not building MMA-Emu MXFP4 kernels as no compatible archs found "
+                   "(requires SM100+: Blackwell, and CUDA 12.8+)")
+  endif()
+
+
   # The cutlass_scaled_mm kernels for Geforce Blackwell SM120 (c3x, i.e. CUTLASS 3.x) require
   # CUDA 12.8 or later
   cuda_archs_loose_intersection(SCALED_MM_ARCHS "12.0;12.0a" "${CUDA_ARCHS}")
@@ -566,6 +620,21 @@ if(VLLM_GPU_LANG STREQUAL "CUDA")
     message(STATUS "Not building NVFP4 as no compatible archs were found.")
     # clear FP4_ARCHS
     set(FP4_ARCHS)
+  endif()
+
+  # MXFP4 CUTLASS GEMM for Geforce Blackwell SM120. Serves as the native
+  # reference the MXFP4 emulation kernels are validated against.
+  cuda_archs_loose_intersection(MXFP4_ARCHS "12.0;12.0a" "${CUDA_ARCHS}")
+  if(${CMAKE_CUDA_COMPILER_VERSION} VERSION_GREATER_EQUAL 12.8 AND MXFP4_ARCHS)
+    set(SRCS "csrc/quantization/fp4/mxfp4_scaled_mm_sm120_kernels.cu")
+    set_gencode_flags_for_srcs(
+      SRCS "${SRCS}"
+      CUDA_ARCHS "${MXFP4_ARCHS}")
+    list(APPEND VLLM_EXT_SRC "${SRCS}")
+    list(APPEND VLLM_GPU_FLAGS "-DENABLE_MXFP4_SM120=1")
+    message(STATUS "Building MXFP4 SM120 for archs: ${MXFP4_ARCHS}")
+  else()
+    message(STATUS "Not building MXFP4 SM120 as no compatible archs were found.")
   endif()
 
   # FP4 Archs and flags
@@ -825,6 +894,20 @@ define_gpu_extension_target(
   INCLUDE_DIRECTORIES ${CUTLASS_TOOLS_UTIL_INCLUDE_DIR}
   USE_SABI 3
   WITH_SOABI)
+
+# Apply the MMA-Emu ENABLE_* defines to every language, not just CUDA.
+# VLLM_GPU_FLAGS reaches the kernels through a COMPILE_LANGUAGE:CUDA generator
+# expression, but torch_bindings.cpp (CXX) needs the same defines to decide
+# which operators to register.
+if(MMAEMU_FP8_ARCHS)
+  target_compile_definitions(_C PRIVATE ENABLE_MMAEMU_FP8=1)
+endif()
+if(MMAEMU_NVFP4_ARCHS)
+  target_compile_definitions(_C PRIVATE ENABLE_MMAEMU_NVFP4=1)
+endif()
+if(MMAEMU_MXFP4_ARCHS)
+  target_compile_definitions(_C PRIVATE ENABLE_MMAEMU_MXFP4=1)
+endif()
 
 # If CUTLASS is compiled on NVCC >= 12.5, it by default uses
 # cudaGetDriverEntryPointByVersion as a wrapper to avoid directly calling the

@@ -58,6 +58,11 @@ def get_flash_attn_version(requires_alibi: bool = False) -> Optional[int]:
                          fa_version, fa_version_unsupported_reason(fa_version))
 
         assert is_fa_version_supported(fa_version)
+        # Recorded so that a run's log states which attention kernel served it.
+        logger.info_once(
+            "Using FlashAttention version %d (VLLM_FLASH_ATTN_VERSION=%s, "
+            "device SM%d%d).", fa_version, envs.VLLM_FLASH_ATTN_VERSION,
+            device_capability.major, device_capability.minor)
         return fa_version
     except (ImportError, AssertionError):
         return None

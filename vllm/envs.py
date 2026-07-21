@@ -144,6 +144,22 @@ if TYPE_CHECKING:
     VLLM_USE_DEEP_GEMM: bool = True
     VLLM_USE_DEEP_GEMM_E8M0: bool = True
     VLLM_USE_DEEP_GEMM_E8M0_HOPPER: bool = False
+    VLLM_USE_MMAEMU_GEMM_FP8: bool = False
+    VLLM_MMAEMU_FP8_ALGORITHM: str = ""
+    VLLM_MMAEMU_FP8_F_BITS: int = 25
+    VLLM_MMAEMU_FP8_G_BITS: int = 32
+    VLLM_MMAEMU_FP8_GROUP_SIZE: int = 16
+    VLLM_MMAEMU_FP8_CHUNK_SIZE: int = 32
+    VLLM_USE_MMAEMU_GEMM_NVFP4: bool = False
+    VLLM_MMAEMU_NVFP4_ALGORITHM: str = ""
+    VLLM_MMAEMU_NVFP4_F_BITS: int = 25
+    VLLM_MMAEMU_NVFP4_G_BITS: int = 6
+    VLLM_USE_MMAEMU_GEMM_MXFP4: bool = False
+    VLLM_MMAEMU_MXFP4_ALGORITHM: str = ""
+    VLLM_MMAEMU_MXFP4_F_BITS: int = 25
+    VLLM_MMAEMU_MXFP4_G_BITS: int = 6
+    VLLM_MMAEMU_MXFP4_GROUP_SIZE: int = 16
+    VLLM_MMAEMU_MXFP4_CHUNK_SIZE: int = 16
     VLLM_SKIP_DEEP_GEMM_WARMUP: bool = False
     VLLM_USE_FUSED_MOE_GROUPED_TOPK: bool = True
     VLLM_USE_FLASHINFER_MOE_FP16: bool = False
@@ -1149,6 +1165,80 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Whether to use E8M0 scaling when DeepGEMM is used on Hopper GPUs.
     "VLLM_USE_DEEP_GEMM_E8M0_HOPPER":
     lambda: bool(int(os.getenv("VLLM_USE_DEEP_GEMM_E8M0_HOPPER", "0"))),
+
+    # Whether to use MMA-Emu GEMM for FP8 operations.
+    "VLLM_USE_MMAEMU_GEMM_FP8":
+    # Use MMA-Emu custom FP8 kernel for W8A8 scaled matmul
+    lambda: bool(int(os.getenv("VLLM_USE_MMAEMU_GEMM_FP8", "0"))),
+
+    # MMA-Emu FP8: accumulation algorithm (gdfs, cofda, cofda_decoupled).
+    # No default: must be set explicitly when the MMA-Emu GEMM is enabled.
+    # For the native tensor-core result, leave the MMA-Emu GEMM disabled.
+    "VLLM_MMAEMU_FP8_ALGORITHM":
+    lambda: os.getenv("VLLM_MMAEMU_FP8_ALGORITHM", ""),
+
+    # MMA-Emu FP8: Fractional bits for FDA/CoFDA/GDFS fused-sum (25 for Blackwell, 13 for Ada)
+    "VLLM_MMAEMU_FP8_F_BITS":
+    lambda: int(os.getenv("VLLM_MMAEMU_FP8_F_BITS", "25")),
+
+    # MMA-Emu FP8: Group accumulator fractional bits (25-32, GDFS only; 32 = lossless)
+    "VLLM_MMAEMU_FP8_G_BITS":
+    lambda: int(os.getenv("VLLM_MMAEMU_FP8_G_BITS", "32")),
+
+    # MMA-Emu FP8: GDFS group size (4, 8, 16, or 32)
+    "VLLM_MMAEMU_FP8_GROUP_SIZE":
+    lambda: int(os.getenv("VLLM_MMAEMU_FP8_GROUP_SIZE", "16")),
+
+    # MMA-Emu FP8: Chunk size for CoFDA accumulation (4, 8, 16, or 32)
+    "VLLM_MMAEMU_FP8_CHUNK_SIZE":
+    lambda: int(os.getenv("VLLM_MMAEMU_FP8_CHUNK_SIZE", "32")),
+
+    # Whether to use MMA-Emu GEMM for FP4 (NVFP4) operations.
+    "VLLM_USE_MMAEMU_GEMM_NVFP4":
+    # Use MMA-Emu custom FP4 kernel for W4A4 scaled matmul
+    lambda: bool(int(os.getenv("VLLM_USE_MMAEMU_GEMM_NVFP4", "0"))),
+
+    # MMA-Emu NVFP4: accumulation algorithm (gdfs, cofda, cofda_decoupled).
+    # No default: must be set explicitly when the MMA-Emu GEMM is enabled.
+    # For the native tensor-core result, leave the MMA-Emu GEMM disabled.
+    "VLLM_MMAEMU_NVFP4_ALGORITHM":
+    lambda: os.getenv("VLLM_MMAEMU_NVFP4_ALGORITHM", ""),
+
+    # MMA-Emu NVFP4: Fractional bits for fused-sum (25 for Blackwell)
+    "VLLM_MMAEMU_NVFP4_F_BITS":
+    lambda: int(os.getenv("VLLM_MMAEMU_NVFP4_F_BITS", "25")),
+
+    # MMA-Emu NVFP4: Fractional bits for GDFS group accumulator (6 = lossless)
+    "VLLM_MMAEMU_NVFP4_G_BITS":
+    lambda: int(os.getenv("VLLM_MMAEMU_NVFP4_G_BITS", "6")),
+
+    # Whether to use MMA-Emu GEMM for MXFP4 operations.
+    "VLLM_USE_MMAEMU_GEMM_MXFP4":
+    # Use MMA-Emu custom MXFP4 kernel for W4A4 scaled matmul (E8M0 scales)
+    lambda: bool(int(os.getenv("VLLM_USE_MMAEMU_GEMM_MXFP4", "0"))),
+
+    # MMA-Emu MXFP4: accumulation algorithm (gdfs, cofda, cofda_decoupled).
+    # No default: must be set explicitly when the MMA-Emu GEMM is enabled.
+    # For the native tensor-core result, leave the MMA-Emu GEMM disabled.
+    "VLLM_MMAEMU_MXFP4_ALGORITHM":
+    lambda: os.getenv("VLLM_MMAEMU_MXFP4_ALGORITHM", ""),
+
+    # MMA-Emu MXFP4: Fractional bits for fused-sum (25 for Blackwell)
+    "VLLM_MMAEMU_MXFP4_F_BITS":
+    lambda: int(os.getenv("VLLM_MMAEMU_MXFP4_F_BITS", "25")),
+
+    # MMA-Emu MXFP4: Fractional bits for GDFS group accumulator (6 = lossless)
+    "VLLM_MMAEMU_MXFP4_G_BITS":
+    lambda: int(os.getenv("VLLM_MMAEMU_MXFP4_G_BITS", "6")),
+
+    # MMA-Emu MXFP4: GDFS group size (4, 8, 16, or 32; default 16)
+    "VLLM_MMAEMU_MXFP4_GROUP_SIZE":
+    lambda: int(os.getenv("VLLM_MMAEMU_MXFP4_GROUP_SIZE", "16")),
+
+    # MMA-Emu MXFP4: CoFDA chunk size (4, 8, 16, or 32; default 16)
+    "VLLM_MMAEMU_MXFP4_CHUNK_SIZE":
+    lambda: int(os.getenv("VLLM_MMAEMU_MXFP4_CHUNK_SIZE", "16")),
+
     # DeepGemm JITs the kernels on-demand. The warmup attempts to make DeepGemm
     # JIT all the required kernels before model execution so there is no
     # JIT'ing in the hot-path. However, this warmup increases the engine
@@ -1535,6 +1625,22 @@ def compute_hash() -> str:
         "VLLM_USE_DEEP_GEMM",
         "VLLM_USE_DEEP_GEMM_E8M0",
         "VLLM_USE_DEEP_GEMM_E8M0_HOPPER",
+        "VLLM_USE_MMAEMU_GEMM_FP8",
+        "VLLM_MMAEMU_FP8_ALGORITHM",
+        "VLLM_MMAEMU_FP8_F_BITS",
+        "VLLM_MMAEMU_FP8_G_BITS",
+        "VLLM_MMAEMU_FP8_GROUP_SIZE",
+        "VLLM_MMAEMU_FP8_CHUNK_SIZE",
+        "VLLM_USE_MMAEMU_GEMM_NVFP4",
+        "VLLM_MMAEMU_NVFP4_ALGORITHM",
+        "VLLM_MMAEMU_NVFP4_F_BITS",
+        "VLLM_MMAEMU_NVFP4_G_BITS",
+        "VLLM_USE_MMAEMU_GEMM_MXFP4",
+        "VLLM_MMAEMU_MXFP4_ALGORITHM",
+        "VLLM_MMAEMU_MXFP4_F_BITS",
+        "VLLM_MMAEMU_MXFP4_G_BITS",
+        "VLLM_MMAEMU_MXFP4_GROUP_SIZE",
+        "VLLM_MMAEMU_MXFP4_CHUNK_SIZE",
         "VLLM_USE_TRTLLM_FP4_GEMM",
         "VLLM_USE_FUSED_MOE_GROUPED_TOPK",
         "VLLM_USE_FLASHINFER_MOE_FP16",

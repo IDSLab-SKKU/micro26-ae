@@ -13,8 +13,11 @@ ARG PYTHON_VERSION=3.12
 # private registries that use a different repository naming conventions.
 #
 # Example:
-# docker build --build-arg BUILD_BASE_IMAGE=registry.acme.org/mirror/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu20.04
-ARG BUILD_BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-devel-ubuntu20.04
+# docker build --build-arg BUILD_BASE_IMAGE=registry.acme.org/mirror/nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04
+#
+# 22.04, matching the image the paper's results were produced in, and matching
+# FINAL_BASE_IMAGE below.
+ARG BUILD_BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04
 # TODO: Restore to base image after FlashInfer AOT wheel fixed
 ARG FINAL_BASE_IMAGE=nvidia/cuda:${CUDA_VERSION}-devel-ubuntu22.04
 
@@ -138,6 +141,20 @@ RUN ldconfig /usr/local/cuda-$(echo $CUDA_VERSION | cut -d. -f1,2)/compat/
 
 WORKDIR /workspace
 
+# PyTorch is installed here rather than through requirements/, which carries no
+# torch pin. Naming the CUDA index explicitly is what fixes the build variant:
+# the same version on PyPI is built against a different CUDA, and the paper's
+# results were produced on 2.8.0+cu128.
+ARG TORCH_VERSION=2.8.0
+ARG TORCHVISION_VERSION=0.23.0
+ARG TORCHAUDIO_VERSION=2.8.0
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system \
+    torch==${TORCH_VERSION} \
+    torchvision==${TORCHVISION_VERSION} \
+    torchaudio==${TORCHAUDIO_VERSION} \
+    --index-url ${PYTORCH_CUDA_INDEX_BASE_URL}/cu$(echo $CUDA_VERSION | cut -d. -f1,2 | tr -d '.')
+
 # install build and runtime dependencies
 COPY requirements/common.txt requirements/common.txt
 COPY requirements/cuda.txt requirements/cuda.txt
@@ -147,9 +164,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # cuda arch list used by torch
 # can be useful for both `dev` and `test`
-# explicitly set the list to avoid issues with torch 2.2
-# see https://github.com/pytorch/pytorch/pull/123243
-ARG torch_cuda_arch_list='7.0 7.5 8.0 8.9 9.0 10.0 12.0'
+#
+# Only the architectures the artifact runs on. The FP8 emulation needs SM89 or
+# later and the NVFP4 emulation needs Blackwell, so the older entries upstream
+# carries would compile nothing of ours while inflating the image. Written
+# without the 'a' suffix on purpose: cuda_archs_loose_intersection promotes 9.0
+# to 9.0a where a kernel demands it (the SM90 CUTLASS FP8 GEMM does).
+ARG torch_cuda_arch_list='9.0 12.0'
 ENV TORCH_CUDA_ARCH_LIST=${torch_cuda_arch_list}
 #################### BASE BUILD IMAGE ####################
 
@@ -186,6 +207,13 @@ ENV MAX_JOBS=${max_jobs}
 # number of threads used by nvcc
 ARG nvcc_threads=8
 ENV NVCC_THREADS=$nvcc_threads
+
+# Skip the FlashAttention-3 (Hopper) extension. It is by far the largest thing
+# in the wheel (~2.7 GB) and the artifact does not use it: the experiments pin
+# FA2, and vLLM falls back to FA2 on Hopper on its own when FA3 is absent. Read
+# by setup.py; see the VLLM_BUILD_FA3 block there.
+ARG build_fa3=0
+ENV VLLM_BUILD_FA3=${build_fa3}
 
 ARG USE_SCCACHE
 ARG SCCACHE_DOWNLOAD_URL=https://github.com/mozilla/sccache/releases/download/v0.8.1/sccache-v0.8.1-x86_64-unknown-linux-musl.tar.gz
@@ -241,7 +269,10 @@ COPY .buildkite/check-wheel-size.py check-wheel-size.py
 # sync the default value with .buildkite/check-wheel-size.py
 ARG VLLM_MAX_SIZE_MB=450
 ENV VLLM_MAX_SIZE_MB=$VLLM_MAX_SIZE_MB
-ARG RUN_WHEEL_CHECK=true
+# Off by default here. It is an upstream policy for the wheels vLLM publishes to
+# PyPI; even without FA3, our extension carries kernels for two architectures
+# and clears 450 MB, which is of no consequence to a locally built image.
+ARG RUN_WHEEL_CHECK=false
 RUN if [ "$RUN_WHEEL_CHECK" = "true" ]; then \
         python3 check-wheel-size.py dist; \
     else \
@@ -548,3 +579,64 @@ FROM vllm-openai-base AS vllm-openai
 
 ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
 #################### OPENAI API SERVER ####################
+
+#################### ARTIFACT EVALUATION IMAGE ####################
+# The image the MICRO 2026 artifact ships: vLLM as built above, plus the
+# evaluation harness. The experiment scripts are not baked in; they are mounted
+# from a clone of the repository, so a reviewer reads and edits them in git.
+#
+# Built on `base` rather than on `vllm-base`, on purpose. vllm-base installs
+# FlashInfer, and both Fp8LinearOp and the ModelOpt NVFP4 linear method prefer
+# FlashInfer over CUTLASS on Blackwell. The paper's native baseline IS the
+# CUTLASS tensor-core GEMM, and the emulation is validated bit-for-bit against
+# it, so a FlashInfer baseline would quietly disagree with the published
+# numbers while still looking plausible. DeepGEMM, gdrcopy and the
+# expert-parallel kernels are left out for a duller reason: the artifact runs
+# one dense model on one GPU.
+FROM base AS ae
+
+ARG PIP_INDEX_URL UV_INDEX_URL
+ARG PIP_EXTRA_INDEX_URL UV_EXTRA_INDEX_URL
+
+ENV UV_HTTP_TIMEOUT=500
+ENV UV_INDEX_STRATEGY="unsafe-best-match"
+ENV UV_LINK_MODE=copy
+
+# vLLM, from the wheel the `build` stage produced.
+RUN --mount=type=bind,from=build,source=/workspace/dist,target=/dist \
+    --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system /dist/*.whl
+
+# The evaluation harness, pinned to the version the paper's numbers came from.
+# Its own dependencies already cover what the tasks need: `evaluate` supplies
+# the code_eval metric HumanEval scores with, and GSM8K-CoT is graded by regex.
+#
+# transformers is pinned alongside it. vLLM's requirements only lower-bound it
+# (transformers >= 4.55.2), so the image would otherwise resolve to a 5.x that
+# both diverges from the paper's environment and drops symbols lm_eval 0.4.9.1
+# imports (AutoModelForVision2Seq), which stops the runner before it loads a
+# model. 4.55.2 is the version the paper's results were produced with.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system lm_eval==0.4.9.1 transformers==4.55.2 pytest
+
+# matplotlib for the Figure 6(a) plot (numpy/pandas already come with the other
+# deps). The paper's figures used 3.8.0, but that pins numpy<2 and the image
+# needs numpy 2 for vLLM/lm_eval; 3.9.4 is the closest release that supports
+# numpy 2, and a line plot renders the same. No LaTeX — the plots use
+# matplotlib's built-in mathtext.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system matplotlib==3.9.4
+
+# The base image ships only `python3`; make `python` resolve to it too, so the
+# reviewer commands work whichever one is typed.
+RUN ln -sf /usr/bin/python3 /usr/local/bin/python
+
+# Keep /workspace to just the mounted artifact/ tree: drop the requirements/ the
+# base stage copied in (build-time only, unused at runtime).
+RUN rm -rf /workspace/requirements
+
+# The experiment scripts arrive as a mount:
+#   -v "$PWD/artifact":/workspace/artifact
+WORKDIR /workspace/artifact
+CMD ["/bin/bash"]
+#################### ARTIFACT EVALUATION IMAGE ####################

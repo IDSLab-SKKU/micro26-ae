@@ -1,0 +1,25 @@
+experiment:
+  name: "Figure 11(b) - NVFP4 GDFS decode"
+
+precision: nvfp4
+
+sweep:
+  g_bits: [6, 5, 4, 3]
+  f_bits: [35, 25, 13, 10]
+
+mma_emu:
+  enabled: true
+  algorithm: gdfs
+
+vllm:
+  max_model_len: 16384
+  gpu_memory_utilization: 0.70
+  tensor_parallel_size: 1
+  enforce_eager: true
+  max_num_seqs: null
+
+eval:
+  model: "nvidia/Llama-3.1-8B-Instruct-NVFP4"
+  tasks:
+    - gsm8k_cot
+    - humaneval_instruct

@@ -1,0 +1,24 @@
+experiment:
+  name: "H100 native"
+  run_name: "native"
+
+precision: fp8
+
+mma_emu:
+  enabled: false
+vllm:
+  max_model_len: 16384
+  gpu_memory_utilization: 0.70
+  tensor_parallel_size: 1
+  enforce_eager: true
+  max_num_seqs: 1
+  kv_cache_dtype: "auto"
+
+eval:
+  model: "nvidia/Llama-3.1-8B-Instruct-FP8"
+  log_samples: true
+  tasks:
+    - arc_challenge
+    - arc_easy
+    - piqa
+    - winogrande

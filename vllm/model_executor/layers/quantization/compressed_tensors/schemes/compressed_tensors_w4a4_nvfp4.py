@@ -6,7 +6,8 @@ import torch
 from torch.nn.parameter import Parameter
 
 import vllm.envs as envs
-from vllm._custom_ops import cutlass_scaled_fp4_mm, scaled_fp4_quant
+from vllm._custom_ops import (cutlass_scaled_fp4_mm, mma_emu_scaled_nvfp4_mm,
+                              scaled_fp4_quant)
 from vllm.logger import init_logger
 from vllm.model_executor.layers.quantization.compressed_tensors.schemes import (
     CompressedTensorsScheme)
@@ -27,7 +28,28 @@ __all__ = ["CompressedTensorsW4A4Fp4"]
 class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
 
     def __init__(self):
-        if envs.VLLM_USE_TRTLLM_FP4_GEMM:
+        if envs.VLLM_USE_MMAEMU_GEMM_NVFP4:
+            # Route the NVFP4 GEMM through the emulation kernel. The parameters
+            # are read once here: reading config inside forward is not allowed.
+            self.backend = "mma_emu"
+            self.mma_emu_algorithm = envs.VLLM_MMAEMU_NVFP4_ALGORITHM
+            self.mma_emu_f_bits = envs.VLLM_MMAEMU_NVFP4_F_BITS
+            self.mma_emu_g_bits = envs.VLLM_MMAEMU_NVFP4_G_BITS
+
+            if self.mma_emu_algorithm == "gdfs":
+                logger.info_once(
+                    "Emulating NVFP4 MMA accumulation: algorithm=%s, "
+                    "f_bits=%d, g_bits=%d", self.mma_emu_algorithm,
+                    self.mma_emu_f_bits, self.mma_emu_g_bits)
+            elif self.mma_emu_algorithm == "cofda":
+                logger.info_once(
+                    "Emulating NVFP4 MMA accumulation: algorithm=%s, "
+                    "f_bits=%d", self.mma_emu_algorithm, self.mma_emu_f_bits)
+            else:
+                logger.info_once(
+                    "Emulating NVFP4 MMA accumulation: algorithm=%s",
+                    self.mma_emu_algorithm)
+        elif envs.VLLM_USE_TRTLLM_FP4_GEMM:
             assert has_flashinfer(), "TRTLLM FP4 GEMM requires FlashInfer"
             self.backend = "flashinfer-trtllm"
             logger.info_once("Using flashinfer-trtllm for FP4")
@@ -164,7 +186,12 @@ class CompressedTensorsW4A4Fp4(CompressedTensorsScheme):
 
         mm_args = (x_fp4, layer.weight_packed, x_blockscale,
                    layer.weight_scale, layer.alpha, output_dtype)
-        if self.backend == "flashinfer-trtllm":
+        if self.backend == "mma_emu":
+            out = mma_emu_scaled_nvfp4_mm(*mm_args,
+                                          algorithm=self.mma_emu_algorithm,
+                                          f_bits=self.mma_emu_f_bits,
+                                          g_bits=self.mma_emu_g_bits)
+        elif self.backend == "flashinfer-trtllm":
             out = flashinfer_scaled_fp4_mm(*mm_args, backend="trtllm")
         elif self.backend == "flashinfer-cutlass":
             out = flashinfer_scaled_fp4_mm(*mm_args, backend="cutlass")

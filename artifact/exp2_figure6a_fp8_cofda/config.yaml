@@ -1,0 +1,25 @@
+experiment:
+  name: "Figure 6(a) - FP8 CoFDA design space"
+
+precision: fp8
+
+sweep:
+  algorithm: [cofda, cofda_decoupled]
+  chunk_size: [32, 16]
+  f_bits: [25, 21, 17, 13, 11, 9, 7, 5, 3]
+
+mma_emu:
+  enabled: true
+
+vllm:
+  max_model_len: 16384
+  gpu_memory_utilization: 0.70
+  tensor_parallel_size: 1
+  enforce_eager: true
+  max_num_seqs: null
+  kv_cache_dtype: "auto"
+
+eval:
+  model: "nvidia/Llama-3.1-8B-Instruct-FP8"
+  tasks:
+    - wikitext

@@ -1,0 +1,27 @@
+experiment:
+  name: "RTX PRO 6000 emulate Hopper (F=13)"
+  run_name: "emulated_hopper"
+
+precision: fp8
+
+mma_emu:
+  enabled: true
+  algorithm: cofda
+  f_bits: 13
+  chunk_size: 32
+vllm:
+  max_model_len: 16384
+  gpu_memory_utilization: 0.70
+  tensor_parallel_size: 1
+  enforce_eager: true
+  max_num_seqs: 1
+  kv_cache_dtype: "auto"
+
+eval:
+  model: "nvidia/Llama-3.1-8B-Instruct-FP8"
+  log_samples: true
+  tasks:
+    - arc_challenge
+    - arc_easy
+    - piqa
+    - winogrande

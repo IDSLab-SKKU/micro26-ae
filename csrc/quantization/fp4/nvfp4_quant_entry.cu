@@ -24,6 +24,13 @@ void scaled_fp4_quant_sm1xxa(torch::Tensor const& output,
                              torch::Tensor const& input_sf);
 #endif
 
+#if (defined(ENABLE_NVFP4_SM100) && ENABLE_NVFP4_SM100) || \
+    (defined(ENABLE_NVFP4_SM120) && ENABLE_NVFP4_SM120)
+void scaled_mxfp4_quant_sm1xxa(torch::Tensor const& output,
+                                torch::Tensor const& input,
+                                torch::Tensor const& output_sf);
+#endif
+
 #if defined ENABLE_NVFP4_SM100 && ENABLE_NVFP4_SM100
 void scaled_fp4_experts_quant_sm100a(
     torch::Tensor& output, torch::Tensor& output_scale,
@@ -71,4 +78,16 @@ void silu_and_mul_nvfp4_quant(torch::Tensor& output, torch::Tensor& output_sf,
 #endif
   TORCH_CHECK_NOT_IMPLEMENTED(
       false, "No compiled silu_and_mul nvfp4 quantization kernel");
+}
+
+void scaled_mxfp4_quant(torch::Tensor& output, torch::Tensor const& input,
+                         torch::Tensor& output_sf) {
+#if (defined(ENABLE_NVFP4_SM100) && ENABLE_NVFP4_SM100) || \
+    (defined(ENABLE_NVFP4_SM120) && ENABLE_NVFP4_SM120)
+  return scaled_mxfp4_quant_sm1xxa(output, input, output_sf);
+#endif
+  TORCH_CHECK_NOT_IMPLEMENTED(
+      false, "No compiled mxfp4 quantization kernel, vLLM should "
+             "be compiled using CUDA 12.8 and target "
+             "compute capability 100 or above.");
 }

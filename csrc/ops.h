@@ -204,6 +204,7 @@ int64_t ggml_moe_get_block_size(int64_t type);
 #ifndef USE_ROCM
 
 bool cutlass_scaled_mm_supports_fp4(int64_t cuda_device_capability);
+bool cutlass_scaled_mm_supports_mxfp4(int64_t cuda_device_capability);
 bool cutlass_scaled_mm_supports_fp8(int64_t cuda_device_capability);
 bool cutlass_scaled_mm_supports_block_fp8(int64_t cuda_device_capability);
 bool cutlass_group_gemm_supported(int64_t cuda_device_capability);
@@ -213,10 +214,49 @@ void cutlass_scaled_fp4_mm(torch::Tensor& D, torch::Tensor const& A,
                            torch::Tensor const& B_sf,
                            torch::Tensor const& alpha);
 
+void cutlass_scaled_mxfp4_mm(torch::Tensor& D, torch::Tensor const& A,
+                             torch::Tensor const& B, torch::Tensor const& A_sf,
+                             torch::Tensor const& B_sf);
+
 void cutlass_scaled_mm(torch::Tensor& out, torch::Tensor const& a,
                        torch::Tensor const& b, torch::Tensor const& a_scales,
                        torch::Tensor const& b_scales,
                        std::optional<torch::Tensor> const& bias);
+
+#if defined(ENABLE_MMAEMU_FP8) && ENABLE_MMAEMU_FP8
+// MMA-Emu scaled_fp8_mm - Custom kernel matching cutlass_scaled_mm interface
+void mma_emu_scaled_fp8_mm(torch::Tensor& out, torch::Tensor const& a,
+                        torch::Tensor const& b, torch::Tensor const& a_scales,
+                        torch::Tensor const& b_scales,
+                        std::optional<torch::Tensor> const& bias,
+                        int64_t algorithm,        // accumulation algorithm
+                        int64_t f_bits,           // fractional bits F
+                        int64_t g_bits,           // GDFS intra-group bits G
+                        int64_t group_size,       // GDFS group size GS
+                        int64_t chunk_size);      // CoFDA chunk size CS
+#endif
+
+#if defined(ENABLE_MMAEMU_NVFP4) && ENABLE_MMAEMU_NVFP4
+// MMA-Emu scaled_nvfp4_mm - Custom NVFP4 kernel matching cutlass_scaled_fp4_mm interface
+void mma_emu_scaled_nvfp4_mm(torch::Tensor& D, torch::Tensor const& A,
+                        torch::Tensor const& B, torch::Tensor const& A_sf,
+                        torch::Tensor const& B_sf, torch::Tensor const& alpha,
+                        int64_t algorithm,        // accumulation algorithm
+                        int64_t f_bits,           // fractional bits F
+                        int64_t g_bits);          // GDFS intra-group bits G
+#endif
+
+#if defined(ENABLE_MMAEMU_MXFP4) && ENABLE_MMAEMU_MXFP4
+// MMA-Emu scaled_mxfp4_mm - Custom MXFP4 kernel with E8M0 scales (no alpha)
+void mma_emu_scaled_mxfp4_mm(torch::Tensor& D, torch::Tensor const& A,
+                           torch::Tensor const& B, torch::Tensor const& A_sf,
+                           torch::Tensor const& B_sf,
+                           int64_t algorithm,        // accumulation algorithm
+                           int64_t f_bits,           // fractional bits F
+                           int64_t g_bits,           // GDFS intra-group bits G
+                           int64_t group_size,       // GDFS group size GS
+                           int64_t chunk_size);      // CoFDA chunk size CS
+#endif
 
 void cutlass_moe_mm(
     torch::Tensor& out_tensors, torch::Tensor const& a_tensors,
@@ -273,6 +313,9 @@ std::vector<torch::Tensor> cutlass_sparse_compress(torch::Tensor const& a);
 void scaled_fp4_quant(torch::Tensor& output, torch::Tensor const& input,
                       torch::Tensor& output_scale,
                       torch::Tensor const& input_scale);
+
+void scaled_mxfp4_quant(torch::Tensor& output, torch::Tensor const& input,
+                        torch::Tensor& output_sf);
 
 void scaled_fp4_experts_quant(
     torch::Tensor& output, torch::Tensor& output_scale,

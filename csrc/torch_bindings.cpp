@@ -383,6 +383,14 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
       {stride_tag});
   ops.impl("cutlass_scaled_fp4_mm", torch::kCUDA, &cutlass_scaled_fp4_mm);
 
+  // CUTLASS mxfp4 block scaled GEMM (E8M0 scales, no global alpha)
+  ops.def(
+      "cutlass_scaled_mxfp4_mm(Tensor! out, Tensor a, Tensor b,"
+      "                        Tensor block_scale_a, Tensor block_scale_b)"
+      " -> ()",
+      {stride_tag});
+  ops.impl("cutlass_scaled_mxfp4_mm", torch::kCUDA, &cutlass_scaled_mxfp4_mm);
+
   // cutlass blockwise scaledgroup GEMM
   ops.def(
       "cutlass_blockwise_scaled_grouped_mm(Tensor! output, Tensor a, Tensor b, "
@@ -407,6 +415,44 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
       "                  Tensor b_scales, Tensor? bias) -> ()",
       {stride_tag});
   ops.impl("cutlass_scaled_mm", torch::kCUDA, &cutlass_scaled_mm);
+
+#if defined(ENABLE_MMAEMU_FP8) && ENABLE_MMAEMU_FP8
+  // MMA-Emu scaled_fp8_mm - Custom GEMM for MMA-Emu FP8 format
+  ops.def(
+      "mma_emu_scaled_fp8_mm(Tensor! out, Tensor a,"
+      "                   Tensor b, Tensor a_scales,"
+      "                   Tensor b_scales, Tensor? bias,"
+      "                   int algorithm, int f_bits,"
+      "                   int g_bits, int group_size,"
+      "                   int chunk_size) -> ()",
+      {stride_tag});
+  ops.impl("mma_emu_scaled_fp8_mm", torch::kCUDA, &mma_emu_scaled_fp8_mm);
+#endif
+
+#if defined(ENABLE_MMAEMU_NVFP4) && ENABLE_MMAEMU_NVFP4
+  // MMA-Emu scaled_fp4_mm - Custom NVFP4 GEMM for MMA-Emu NVFP4 format
+  ops.def(
+      "mma_emu_scaled_nvfp4_mm(Tensor! D, Tensor A,"
+      "                   Tensor B, Tensor A_sf,"
+      "                   Tensor B_sf, Tensor alpha,"
+      "                   int algorithm, int f_bits,"
+      "                   int g_bits) -> ()",
+      {stride_tag});
+  ops.impl("mma_emu_scaled_nvfp4_mm", torch::kCUDA, &mma_emu_scaled_nvfp4_mm);
+#endif
+
+#if defined(ENABLE_MMAEMU_MXFP4) && ENABLE_MMAEMU_MXFP4
+  // MMA-Emu scaled_mxfp4_mm - Custom MXFP4 GEMM for MMA-Emu MXFP4 format
+  ops.def(
+      "mma_emu_scaled_mxfp4_mm(Tensor! D, Tensor A,"
+      "                     Tensor B, Tensor A_sf,"
+      "                     Tensor B_sf,"
+      "                     int algorithm, int f_bits,"
+      "                     int g_bits, int group_size,"
+      "                     int chunk_size) -> ()",
+      {stride_tag});
+  ops.impl("mma_emu_scaled_mxfp4_mm", torch::kCUDA, &mma_emu_scaled_mxfp4_mm);
+#endif
 
   // CUTLASS w8a8 GEMM, supporting asymmetric per-tensor or per-row/column
   // quantization.
@@ -532,6 +578,12 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
       "                 Tensor! output_scale, Tensor input_scale) -> ()");
   ops.impl("scaled_fp4_quant", torch::kCUDA, &scaled_fp4_quant);
 
+  // Compute MXFP4 block quantized tensor (E8M0 scales, no global scale).
+  ops.def(
+      "scaled_mxfp4_quant(Tensor! output, Tensor input,"
+      "                   Tensor! output_scale) -> ()");
+  ops.impl("scaled_mxfp4_quant", torch::kCUDA, &scaled_mxfp4_quant);
+
   // Compute NVFP4 experts quantization.
   ops.def(
       "scaled_fp4_experts_quant(Tensor! output, Tensor! output_scale,"
@@ -543,6 +595,13 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, ops) {
   // of the given capability
   ops.def("cutlass_scaled_mm_supports_fp4(int cuda_device_capability) -> bool");
   ops.impl("cutlass_scaled_mm_supports_fp4", &cutlass_scaled_mm_supports_fp4);
+
+  // Check if cutlass_scaled_mxfp4_mm is supported for CUDA devices
+  // of the given capability
+  ops.def(
+      "cutlass_scaled_mm_supports_mxfp4(int cuda_device_capability) -> bool");
+  ops.impl("cutlass_scaled_mm_supports_mxfp4",
+           &cutlass_scaled_mm_supports_mxfp4);
 #endif
 
   // Quantized GEMM for GPTQ.

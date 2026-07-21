@@ -128,18 +128,18 @@ inline __device__ float reciprocal_approximate_ftz(float a) {
   return b;
 }
 
-template <class SFType, int CVT_FP4_NUM_THREADS_PER_SF>
+template <class SFType, int CVT_FP4_NUM_THREADS_PER_SF, int SF_VEC_SIZE = 16>
 __device__ uint8_t* cvt_quant_to_fp4_get_sf_out_offset(int rowIdx, int colIdx,
                                                        int numCols,
                                                        SFType* SFout) {
-  static_assert(CVT_FP4_NUM_THREADS_PER_SF == 1 ||
-                CVT_FP4_NUM_THREADS_PER_SF == 2);
+  static_assert(CVT_FP4_NUM_THREADS_PER_SF >= 1 &&
+                CVT_FP4_NUM_THREADS_PER_SF <= 4);
 
   // One pair of threads write one SF to global memory.
   // TODO: stage through smem for packed STG.32
   // is it better than STG.8 from 4 threads ?
   if (threadIdx.x % CVT_FP4_NUM_THREADS_PER_SF == 0) {
-    // SF vector index (16 elements share one SF in the K dimension).
+    // SF vector index (SF_VEC_SIZE elements share one SF in the K dimension).
     int32_t kIdx = colIdx / CVT_FP4_NUM_THREADS_PER_SF;
     int32_t mIdx = rowIdx;
 
@@ -147,8 +147,8 @@ __device__ uint8_t* cvt_quant_to_fp4_get_sf_out_offset(int rowIdx, int colIdx,
     // --> index [mTileIdx, kTileIdx, outerMIdx, innerMIdx, innerKIdx]
 
     int32_t mTileIdx = mIdx / (32 * 4);
-    // SF vector size 16.
-    int factor = CVT_FP4_SF_VEC_SIZE * 4;
+    // SF vector size parameterized.
+    int factor = SF_VEC_SIZE * 4;
     int32_t numKTiles = (numCols + factor - 1) / factor;
     int64_t mTileStride = numKTiles * 32 * 4 * 4;
 
@@ -176,9 +176,10 @@ __device__ uint8_t* cvt_quant_to_fp4_get_sf_out_offset(int rowIdx, int colIdx,
 }
 
 // Quantizes the provided PackedVec into the uint32_t output
-template <class Type, bool UE8M0_SF = false>
+template <class Type, bool UE8M0_SF = false, int SF_VEC_SIZE = 16>
 __device__ uint32_t cvt_warp_fp16_to_fp4(PackedVec<Type>& vec, float SFScaleVal,
                                          uint8_t* SFout) {
+  static constexpr int NUM_THREADS_PER_SF = SF_VEC_SIZE / CVT_FP4_ELTS_PER_THREAD;
   // Get absolute maximum values among the local 8 values.
   auto localMax = __habs2(vec.elts[0]);
 
@@ -188,8 +189,11 @@ __device__ uint32_t cvt_warp_fp16_to_fp4(PackedVec<Type>& vec, float SFScaleVal,
     localMax = __hmax2(localMax, __habs2(vec.elts[i]));
   }
 
-  // Get the absolute maximum among all 16 values (two threads).
-  localMax = __hmax2(__shfl_xor_sync(uint32_t(-1), localMax, 1), localMax);
+  // Get the absolute maximum among all SF_VEC_SIZE values.
+#pragma unroll
+  for (int offset = 1; offset < NUM_THREADS_PER_SF; offset *= 2) {
+    localMax = __hmax2(__shfl_xor_sync(uint32_t(-1), localMax, offset), localMax);
+  }
   // Get the final absolute maximum values.
   float vecMax = float(__hmax(localMax.x, localMax.y));
 
@@ -201,12 +205,18 @@ __device__ uint32_t cvt_warp_fp16_to_fp4(PackedVec<Type>& vec, float SFScaleVal,
   uint8_t fp8SFVal;
   // Write the SF to global memory (STG.8).
   if constexpr (UE8M0_SF) {
-    // Extract the 8 exponent bits from float32.
-    // float 32bits = 1 sign bit + 8 exponent bits + 23 mantissa bits.
-    uint32_t tmp = reinterpret_cast<uint32_t&>(SFValue) >> 23;
-    fp8SFVal = tmp & 0xff;
-    // Convert back to fp32.
-    reinterpret_cast<uint32_t&>(SFValue) = tmp << 23;
+    // For E8M0 (power-of-2 only), use CEIL instead of FLOOR to prevent
+    // activation clipping. The bit-shift extracts the biased exponent which
+    // is a floor operation. For E4M3 this is fine (small rounding error),
+    // but for E8M0 floor can produce a scale up to 2x too small, causing
+    // values to exceed FP4 max (6.0) and clip severely.
+    uint32_t raw = reinterpret_cast<uint32_t&>(SFValue);
+    uint32_t exp = (raw >> 23) & 0xff;
+    uint32_t mantissa = raw & 0x7FFFFF;
+    if (mantissa != 0) exp += 1;  // ceil: round UP to next power of 2
+    fp8SFVal = static_cast<uint8_t>(exp);
+    // Convert back to fp32 using the ceiled exponent.
+    reinterpret_cast<uint32_t&>(SFValue) = (exp << 23);
   } else {
     // Here SFValue is always positive, so E4M3 is the same as UE4M3.
     __nv_fp8_e4m3 tmp = __nv_fp8_e4m3(SFValue);

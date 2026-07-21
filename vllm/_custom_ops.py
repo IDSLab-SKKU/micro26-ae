@@ -584,6 +584,10 @@ def cutlass_scaled_mm_supports_fp4(cuda_device_capability: int) -> bool:
     return torch.ops._C.cutlass_scaled_mm_supports_fp4(cuda_device_capability)
 
 
+def cutlass_scaled_mm_supports_mxfp4(cuda_device_capability: int) -> bool:
+    return torch.ops._C.cutlass_scaled_mm_supports_mxfp4(cuda_device_capability)
+
+
 def cutlass_blockwise_scaled_grouped_mm(
     output: torch.Tensor,
     a: torch.Tensor,
@@ -607,6 +611,19 @@ def cutlass_scaled_fp4_mm(a: torch.Tensor, b: torch.Tensor,
     out = torch.empty((m, n), dtype=out_dtype, device=a.device)
     torch.ops._C.cutlass_scaled_fp4_mm(out, a, b, block_scale_a, block_scale_b,
                                        alpha)
+    return out
+
+
+def cutlass_scaled_mxfp4_mm(a: torch.Tensor, b: torch.Tensor,
+                            block_scale_a: torch.Tensor,
+                            block_scale_b: torch.Tensor,
+                            out_dtype: torch.dtype) -> torch.Tensor:
+    """MXFP4 CUTLASS GEMM: E8M0 block scales, no global alpha."""
+    assert a.ndim == 2 and b.ndim == 2
+    m, n = a.shape[0], b.shape[0]
+    out = torch.empty((m, n), dtype=out_dtype, device=a.device)
+    torch.ops._C.cutlass_scaled_mxfp4_mm(out, a, b, block_scale_a,
+                                         block_scale_b)
     return out
 
 
@@ -667,6 +684,347 @@ def cutlass_scaled_mm(a: torch.Tensor,
         torch.ops._C.cutlass_scaled_mm(out, a, b, scale_a, scale_b, bias)
 
     return out.view(*target_shape)
+
+
+FP8_ALGORITHM_MAP = {"gdfs": 1, "cofda": 2, "cofda_decoupled": 3}
+
+
+def mma_emu_scaled_fp8_mm(a: torch.Tensor,
+                       b: torch.Tensor,
+                       scale_a: torch.Tensor,
+                       scale_b: torch.Tensor,
+                       out_dtype: torch.dtype,
+                       bias: Optional[torch.Tensor] = None,
+                       algorithm: Optional[str] = None,
+                       f_bits: Optional[int] = None,
+                       g_bits: Optional[int] = None,
+                       group_size: Optional[int] = None,
+                       chunk_size: Optional[int] = None) -> torch.Tensor:
+    """
+    Custom Kernel for MMA-Emu scaled FP8 matmul.
+
+    This is a drop-in replacement for cutlass_scaled_mm that emulates the
+    MMA accumulation arithmetic on CUDA cores. For the native tensor-core
+    result, call cutlass_scaled_mm instead.
+
+    Currently supports:
+    - FP8 E4M3 inputs only
+    - Per-tensor scale factors only (scale_a and scale_b must be scalar)
+    - BF16 or FP16 output
+
+    Algorithms:
+    - "gdfs": Group-Dot-Fused-Sum emulation (configurable g_bits, group_size)
+    - "cofda": Chain-of-FDA emulation (configurable chunk_size)
+    - "cofda_decoupled": Two-step CoFDA (products summed with F bits, then merged
+      into accumulator with F2=23 bits)
+
+    Args:
+        a: Input tensor [M, K] in FP8 E4M3 format
+        b: Weight tensor [K, N] in FP8 E4M3 format (column-major)
+        scale_a: Per-tensor scale for a (must be scalar)
+        scale_b: Per-tensor scale for b (must be scalar)
+        out_dtype: Output dtype (torch.bfloat16 or torch.float16)
+        bias: Optional bias tensor [N]
+        algorithm: "gdfs", "cofda", or "cofda_decoupled"
+        f_bits: Fractional bits for fused-sum (3-25, emulation only)
+        g_bits: Group accumulator bits ({13,17,21,25,32}, GDFS only)
+        group_size: GDFS group size (4, 8, 16, or 32)
+        chunk_size: CoFDA chunk size (4, 8, 16, or 32)
+
+    Returns:
+        Output tensor [M, N] in out_dtype
+    """
+    import vllm.envs as envs
+
+    assert (out_dtype is torch.bfloat16 or out_dtype is torch.float16)
+    assert bias is None or (bias.numel() == b.shape[1]
+                            and bias.dtype == out_dtype)
+    assert scale_a.numel() == 1, "MMA-Emu only supports per-tensor scale_a"
+    assert scale_b.numel() == 1, "MMA-Emu only supports per-tensor scale_b"
+
+    # Resolve algorithm from env var if not provided. There is no default:
+    # the accumulation algorithm determines the numerics, so it must be chosen
+    # explicitly. Leave the MMA-Emu GEMM disabled to get native tensor cores.
+    if algorithm is None:
+        algorithm = envs.VLLM_MMAEMU_FP8_ALGORITHM
+
+    algo_str = (algorithm or "").lower()
+    if not algo_str:
+        raise ValueError(
+            "MMA-Emu FP8 GEMM is enabled but no accumulation algorithm was "
+            f"selected. Set VLLM_MMAEMU_FP8_ALGORITHM to one of "
+            f"{list(FP8_ALGORITHM_MAP.keys())}, or pass algorithm=... .")
+    if algo_str not in FP8_ALGORITHM_MAP:
+        raise ValueError(
+            f"algorithm must be one of {list(FP8_ALGORITHM_MAP.keys())}, "
+            f"got '{algorithm}'")
+    algo_val = FP8_ALGORITHM_MAP[algo_str]
+
+    # Resolve parameters from env vars
+    f_bits_val = f_bits if f_bits is not None else envs.VLLM_MMAEMU_FP8_F_BITS
+    g_bits_val = g_bits if g_bits is not None else envs.VLLM_MMAEMU_FP8_G_BITS
+    group_size_val = (group_size if group_size is not None
+                      else envs.VLLM_MMAEMU_FP8_GROUP_SIZE)
+    chunk_size_val = (chunk_size if chunk_size is not None
+                      else envs.VLLM_MMAEMU_FP8_CHUNK_SIZE)
+
+    # Validate per algorithm
+    if algo_str == "gdfs":
+        if f_bits_val < 7 or f_bits_val > 35:
+            raise ValueError(
+                f"f_bits must be in range [7, 35], got {f_bits_val}")
+        if g_bits_val not in (3, 4, 5, 6, 8, 10, 13, 17, 25, 32):
+            raise ValueError(
+                f"g_bits must be one of {{3, 4, 5, 6, 8, 10, 13, 17, 25, 32}}, "
+                f"got {g_bits_val}")
+        if group_size_val not in (8, 16):
+            raise ValueError(
+                f"group_size must be one of {{8, 16}}, "
+                f"got {group_size_val}")
+
+    elif algo_str == "cofda":
+        if f_bits_val < 3 or f_bits_val > 25:
+            raise ValueError(
+                f"f_bits must be in range [3, 25], got {f_bits_val}")
+        if chunk_size_val not in (4, 8, 16, 32):
+            raise ValueError(
+                f"chunk_size must be one of {{4, 8, 16, 32}}, "
+                f"got {chunk_size_val}")
+
+    elif algo_str == "cofda_decoupled":
+        if f_bits_val < 3 or f_bits_val > 25:
+            raise ValueError(
+                f"CoFDA (C-decoupled): f_bits must be in range [3, 25], "
+                f"got {f_bits_val}")
+        if chunk_size_val not in (8, 16, 32):
+            raise ValueError(
+                f"CoFDA (C-decoupled): chunk_size must be one of {{8, 16, 32}}, "
+                f"got {chunk_size_val}")
+
+    # Massage the input to be 2D
+    target_shape = (*a.shape[:-1], b.shape[1])
+    a = a.view(-1, a.shape[-1])
+
+    out = torch.empty((a.shape[0], b.shape[1]),
+                      dtype=out_dtype,
+                      device=a.device)
+    torch.ops._C.mma_emu_scaled_fp8_mm(out, a, b, scale_a, scale_b, bias,
+                                    algo_val, f_bits_val, g_bits_val,
+                                    group_size_val, chunk_size_val)
+
+    return out.view(*target_shape)
+
+
+NVFP4_ALGORITHM_MAP = {"gdfs": 1, "cofda": 2}
+
+
+def mma_emu_scaled_nvfp4_mm(a: torch.Tensor,
+                       b: torch.Tensor,
+                       block_scale_a: torch.Tensor,
+                       block_scale_b: torch.Tensor,
+                       alpha: torch.Tensor,
+                       out_dtype: torch.dtype,
+                       algorithm: Optional[str] = None,
+                       f_bits: Optional[int] = None,
+                       g_bits: Optional[int] = None) -> torch.Tensor:
+    """
+    Custom Kernel for MMA-Emu scaled NVFP4 matmul.
+
+    This is a drop-in replacement for cutlass_scaled_fp4_mm that uses
+    configurable accumulation algorithms for research on intermediate
+    rounding effects.
+
+    Supports:
+    - NVFP4 E2M1 packed inputs (2 values per byte)
+    - UE4M3 block scale factors (block size = 16)
+    - BF16 or FP16 output
+    - Three algorithms: TC, GDFS, CoFDA
+
+    Args:
+        a: FP4 activation tensor, packed [M, K/2] uint8
+        b: FP4 weight tensor, packed [N, K/2] uint8
+        block_scale_a: Block scales for a [M_rounded, K/16_rounded] float8_e4m3fn
+        block_scale_b: Block scales for b [N_rounded, K/16_rounded] float8_e4m3fn
+        alpha: Global scale factor [1] float32
+        out_dtype: Output dtype (torch.bfloat16 or torch.float16)
+        algorithm: "gdfs" or "cofda" (default: env)
+        f_bits: Fractional bits for fused-sum accumulation (3-25, default: env)
+        g_bits: Fractional bits for GDFS group accumulator
+                ({2,3,4,5,6,32}, default: env). G=6 is lossless for E2M1
+                products; G=32 (full-precision group accumulator) is numerically
+                identical to G=6 and matches the MoE grouped GDFS convention.
+
+    Returns:
+        Output tensor [M, N] in out_dtype
+    """
+    assert a.ndim == 2 and b.ndim == 2
+    assert out_dtype is torch.bfloat16 or out_dtype is torch.float16
+
+    m, n = a.shape[0], b.shape[0]
+
+    # Determine algorithm from parameter or environment
+    if algorithm is None:
+        algo_str = envs.VLLM_MMAEMU_NVFP4_ALGORITHM
+    else:
+        algo_str = algorithm
+    if not algo_str:
+        raise ValueError(
+            "MMA-Emu NVFP4 GEMM is enabled but no accumulation algorithm was "
+            f"selected. Set VLLM_MMAEMU_NVFP4_ALGORITHM to one of "
+            f"{list(NVFP4_ALGORITHM_MAP.keys())}, or pass algorithm=... .")
+    algo_val = NVFP4_ALGORITHM_MAP.get(algo_str)
+    if algo_val is None:
+        raise ValueError(
+            f"algorithm must be one of {list(NVFP4_ALGORITHM_MAP.keys())}, "
+            f"got '{algo_str}'")
+
+    # Determine f_bits from parameter or environment
+    f_bits_val = f_bits if f_bits is not None else envs.VLLM_MMAEMU_NVFP4_F_BITS
+
+    # Determine g_bits from parameter or environment
+    g_bits_val = g_bits if g_bits is not None else envs.VLLM_MMAEMU_NVFP4_G_BITS
+
+    # Validate parameters based on algorithm
+    if algo_str == "gdfs":
+        if f_bits_val < 5 or f_bits_val > 35:
+            raise ValueError(
+                f"f_bits must be in range [5, 35], got {f_bits_val}")
+        if g_bits_val not in (2, 3, 4, 5, 6, 32):
+            raise ValueError(
+                f"g_bits must be one of {{2, 3, 4, 5, 6, 32}}, "
+                f"got {g_bits_val}")
+    elif algo_str == "cofda":
+        if f_bits_val < 3 or f_bits_val > 25:
+            raise ValueError(
+                f"f_bits must be in range [3, 25], got {f_bits_val}")
+
+    elif algo_str == "cofda_decoupled":
+        if f_bits_val < 3 or f_bits_val > 25:
+            raise ValueError(
+                f"CoFDA (C-decoupled): f_bits must be in range [3, 25], "
+                f"got {f_bits_val}")
+
+    out = torch.empty((m, n), dtype=out_dtype, device=a.device)
+    torch.ops._C.mma_emu_scaled_nvfp4_mm(out, a, b, block_scale_a, block_scale_b,
+                                    alpha, algo_val, f_bits_val, g_bits_val)
+    return out
+
+
+MXFP4_ALGORITHM_MAP = {"gdfs": 1, "cofda": 2}
+
+
+def mma_emu_scaled_mxfp4_mm(a: torch.Tensor,
+                          b: torch.Tensor,
+                          block_scale_a: torch.Tensor,
+                          block_scale_b: torch.Tensor,
+                          out_dtype: torch.dtype,
+                          algorithm: Optional[str] = None,
+                          f_bits: Optional[int] = None,
+                          g_bits: Optional[int] = None,
+                          group_size: Optional[int] = None,
+                          chunk_size: Optional[int] = None) -> torch.Tensor:
+    """
+    Custom Kernel for MMA-Emu scaled MXFP4 matmul.
+
+    This is a drop-in replacement for cutlass_scaled_mxfp4_mm that uses
+    configurable accumulation algorithms for research on intermediate
+    rounding effects.
+
+    Supports:
+    - MXFP4 E2M1 packed inputs (2 values per byte)
+    - E8M0 block scale factors (block size = 32)
+    - BF16 or FP16 output
+    - Three algorithms: TC, GDFS, CoFDA
+    - No global alpha (unlike NVFP4)
+
+    Args:
+        a: FP4 activation tensor, packed [M, K/2] uint8
+        b: FP4 weight tensor, packed [N, K/2] uint8
+        block_scale_a: Block scales for a [M_rounded, K/32_rounded] uint8 E8M0
+        block_scale_b: Block scales for b [N_rounded, K/32_rounded] uint8 E8M0
+        out_dtype: Output dtype (torch.bfloat16 or torch.float16)
+        algorithm: "gdfs" or "cofda" (default: env)
+        f_bits: Fractional bits for fused-sum accumulation (3-25, default: env)
+        g_bits: Fractional bits for GDFS group accumulator ({2,3,4,5,6}, default: env)
+        group_size: GDFS group size (4, 8, 16, or 32, default: env)
+        chunk_size: CoFDA chunk size (4, 8, 16, or 32, default: env)
+
+    Returns:
+        Output tensor [M, N] in out_dtype
+    """
+    assert a.ndim == 2 and b.ndim == 2
+    assert out_dtype is torch.bfloat16 or out_dtype is torch.float16
+
+    m, n = a.shape[0], b.shape[0]
+
+    # Determine algorithm from parameter or environment
+    if algorithm is None:
+        algo_str = envs.VLLM_MMAEMU_MXFP4_ALGORITHM
+    else:
+        algo_str = algorithm
+    if not algo_str:
+        raise ValueError(
+            "MMA-Emu MXFP4 GEMM is enabled but no accumulation algorithm was "
+            f"selected. Set VLLM_MMAEMU_MXFP4_ALGORITHM to one of "
+            f"{list(MXFP4_ALGORITHM_MAP.keys())}, or pass algorithm=... .")
+    algo_val = MXFP4_ALGORITHM_MAP.get(algo_str)
+    if algo_val is None:
+        raise ValueError(
+            f"algorithm must be one of {list(MXFP4_ALGORITHM_MAP.keys())}, "
+            f"got '{algo_str}'")
+
+    # Determine f_bits from parameter or environment
+    f_bits_val = f_bits if f_bits is not None else envs.VLLM_MMAEMU_MXFP4_F_BITS
+
+    # Determine g_bits from parameter or environment
+    g_bits_val = g_bits if g_bits is not None else envs.VLLM_MMAEMU_MXFP4_G_BITS
+
+    # Determine group_size from parameter or environment
+    group_size_val = (group_size if group_size is not None
+                      else envs.VLLM_MMAEMU_MXFP4_GROUP_SIZE)
+
+    # Determine chunk_size from parameter or environment
+    chunk_size_val = (chunk_size if chunk_size is not None
+                      else envs.VLLM_MMAEMU_MXFP4_CHUNK_SIZE)
+
+    # Validate parameters based on algorithm
+    if algo_str == "gdfs":
+        if f_bits_val < 5 or f_bits_val > 35:
+            raise ValueError(
+                f"f_bits must be in range [5, 35], got {f_bits_val}")
+        if g_bits_val not in (2, 3, 4, 5, 6):
+            raise ValueError(
+                f"g_bits must be one of {{2, 3, 4, 5, 6}}, "
+                f"got {g_bits_val}")
+        if group_size_val not in (4, 8, 16, 32):
+            raise ValueError(
+                f"group_size must be one of {{4, 8, 16, 32}}, "
+                f"got {group_size_val}")
+    elif algo_str == "cofda":
+        if f_bits_val < 3 or f_bits_val > 25:
+            raise ValueError(
+                f"f_bits must be in range [3, 25], got {f_bits_val}")
+        if chunk_size_val not in (4, 8, 16, 32):
+            raise ValueError(
+                f"chunk_size must be one of {{4, 8, 16, 32}}, "
+                f"got {chunk_size_val}")
+
+    elif algo_str == "cofda_decoupled":
+        if f_bits_val < 3 or f_bits_val > 25:
+            raise ValueError(
+                f"CoFDA (C-decoupled): f_bits must be in range [3, 25], "
+                f"got {f_bits_val}")
+        if chunk_size_val not in (16, 32):
+            raise ValueError(
+                f"CoFDA (C-decoupled): chunk_size must be one of {{16, 32}}, "
+                f"got {chunk_size_val}")
+
+    out = torch.empty((m, n), dtype=out_dtype, device=a.device)
+    torch.ops._C.mma_emu_scaled_mxfp4_mm(out, a, b, block_scale_a,
+                                       block_scale_b, algo_val,
+                                       f_bits_val, g_bits_val,
+                                       group_size_val, chunk_size_val)
+    return out
 
 
 def cutlass_scaled_mm_azp(a: torch.Tensor,
@@ -1146,6 +1504,52 @@ def scaled_fp4_quant(
     torch.ops._C.scaled_fp4_quant(output, input, output_scale,
                                   input_global_scale)
     output_scale = output_scale.view(torch.float8_e4m3fn)
+    return output, output_scale
+
+
+def scaled_mxfp4_quant(
+        input: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Quantize input tensor to MXFP4 and return quantized tensor and scale.
+
+    Unlike NVFP4, there is no global scale: every 32 consecutive elements of
+    the last dimension share one E8M0 (power-of-two) scaling factor, stored in
+    the same swizzled layout the tensor cores require.
+
+    Returns:
+        tuple[torch.Tensor, torch.Tensor]: the output tensor in FP4, with two
+            values packed into a uint8, and the E8M0 scaling factors as uint8
+            in the swizzled layout.
+    """
+    assert not current_platform.is_rocm()
+    assert input.ndim >= 1, (
+        f'input.ndim needs to be >= 1, but got {input.ndim}.')
+    other_dims = 1 if input.ndim == 1 else -1
+    input = input.reshape(other_dims, input.shape[-1])
+    m, n = input.shape
+    block_size = 32
+    device = input.device
+
+    assert n % block_size == 0, (
+        f'last dim has to be multiple of 32, but got {n}.')
+    assert input.dtype in (torch.float16, torch.bfloat16), (
+        f'input.dtype needs to be fp16 or bf16 but got {input.dtype}.')
+
+    # Two fp4 values will be packed into an uint8.
+    output = torch.empty((m, n // 2), device=device, dtype=torch.uint8)
+
+    # Same swizzled scale layout as NVFP4 (minimum tile 128x4), but with 32
+    # elements per block instead of 16.
+    round_up = lambda x, y: (x + y - 1) // y * y
+    rounded_m = round_up(m, 128)
+    scale_n = n // block_size
+    rounded_n = round_up(scale_n, 4)
+    output_scale = torch.empty((rounded_m, rounded_n // 4),
+                               device=device,
+                               dtype=torch.int32)
+
+    torch.ops._C.scaled_mxfp4_quant(output, input, output_scale)
+    output_scale = output_scale.view(torch.uint8)
     return output, output_scale
 
 

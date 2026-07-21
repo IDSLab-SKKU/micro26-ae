@@ -581,7 +581,14 @@ if _is_hip():
 
 if _is_cuda():
     ext_modules.append(CMakeExtension(name="vllm.vllm_flash_attn._vllm_fa2_C"))
-    if envs.VLLM_USE_PRECOMPILED or get_nvcc_cuda_version() >= Version("12.3"):
+    # FA3 (Hopper) is the largest extension by far and this artifact does not
+    # use it: the experiments pin FlashAttention 2, and when FA3 is absent vLLM
+    # falls back to FA2 on Hopper on its own (see _is_fa3_supported). Skipping it
+    # is what keeps the image wheel under the size check. Set
+    # VLLM_BUILD_FA3=0 to opt out; unset, the upstream behavior is unchanged.
+    _build_fa3 = os.environ.get("VLLM_BUILD_FA3", "1") == "1"
+    if _build_fa3 and (envs.VLLM_USE_PRECOMPILED
+                       or get_nvcc_cuda_version() >= Version("12.3")):
         # FA3 requires CUDA 12.3 or later
         ext_modules.append(
             CMakeExtension(name="vllm.vllm_flash_attn._vllm_fa3_C"))

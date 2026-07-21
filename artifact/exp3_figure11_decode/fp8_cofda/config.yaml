@@ -1,0 +1,26 @@
+experiment:
+  name: "Figure 11(a) - FP8 CoFDA decode"
+
+precision: fp8
+
+sweep:
+  f_bits: [25, 21, 17, 13, 12, 11, 10, 9, 7]
+
+mma_emu:
+  enabled: true
+  algorithm: cofda
+  chunk_size: 32
+
+vllm:
+  max_model_len: 16384
+  gpu_memory_utilization: 0.70
+  tensor_parallel_size: 1
+  enforce_eager: true
+  max_num_seqs: null
+  kv_cache_dtype: "auto"
+
+eval:
+  model: "nvidia/Llama-3.1-8B-Instruct-FP8"
+  tasks:
+    - gsm8k_cot
+    - humaneval_instruct
