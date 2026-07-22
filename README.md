@@ -21,7 +21,7 @@ framework to reproduce three of the paper's main results:
 
 - **Algorithm:** MMA accumulation algorithm
 - **Program:** vLLM with the MMA Emulation kernels; lm-eval-harness for evaluation
-- **Compilation:** None required — vLLM and the kernels are prebuilt in the Docker image
+- **Compilation:** Not required by default — prebuilt in the Docker image; optionally build from source with uv (needs CUDA Toolkit 12.8, g++ 10+)
 - **Model:** LLaMA-3.1-8B-Instruct (FP8 and NVFP4 checkpoints from HuggingFace)
 - **Data set:** WikiText-2, ARC-Challenge, ARC-Easy, PIQA, WinoGrande, GSM8K, HumanEval (via lm-eval-harness)
 - **Run-time environment:** Docker, NVIDIA Container Toolkit
@@ -84,6 +84,9 @@ cd micro26-ae/artifact
 This pulls the Docker image and drops you into the container. See
 [`artifact/README.md`](artifact/README.md) for the full setup — the image, GPU
 requirements, and a quick verification step.
+
+The Docker image is recommended, but you can also build from source: run
+`./build.sh` from `artifact/` — see [Optional: build from source with uv](artifact/README.md#optional-build-from-source-with-uv).
 
 ## 5. Experiments and Expected Results
 

@@ -4,7 +4,8 @@
 
 ```text
 artifact/
-├── run-docker.sh              start the container
+├── run-docker.sh              start the container (prebuilt image)
+├── build.sh                   optional: build vLLM from source with uv
 ├── scripts/                   shared tooling
 │   ├── run_experiment.py      experiment runner (reads a config.yaml, drives lm-eval)
 │   ├── compare.py             Table 6 cross-architecture comparison
@@ -50,6 +51,33 @@ python3 -c "import vllm; print('vLLM', vllm.__version__)"
 
 Printing a version (e.g. `vLLM 0.1.dev...`) means the image was built correctly —
 the vLLM wheel with the MMA-Emu kernels is installed and loads.
+
+### Optional: build from source with uv
+
+We recommend the prebuilt Docker image above. If you would rather build from
+source, run `./build.sh` from `artifact/` — it builds vLLM and the MMA-Emu
+kernels with [uv](https://docs.astral.sh/uv/), pinned to the same environment as
+the image, and compiled for Hopper (SM90) and Blackwell (SM120) (~30 min).
+
+**Host prerequisites:**
+
+- **CUDA Toolkit 12.8** (`nvcc` on `PATH`)
+- **C++ compiler** (g++ 10 or newer)
+- **Python 3.12**
+- **uv** (<https://docs.astral.sh/uv/>)
+
+```bash
+./build.sh          # build vLLM + MMA-Emu kernels from source (~30 min)
+```
+
+The build creates a `.venv/` at the repo root. Activate it and verify:
+
+```bash
+source ../.venv/bin/activate   # .venv is at the repo root
+python3 -c "import vllm; print('vLLM', vllm.__version__)"
+```
+
+Afterwards the experiments run directly, without Docker.
 
 ## Evaluation and Expected Results
 
