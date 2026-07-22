@@ -40,7 +40,6 @@ framework to reproduce three of the paper's main results:
 
 ### 3.1 How to access
 
-- **Zenodo:** TBA
 - **GitHub:** <https://github.com/IDSLab-SKKU/micro26-ae>
 
 ### 3.2 Hardware dependencies
