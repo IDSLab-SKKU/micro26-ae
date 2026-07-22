@@ -21,7 +21,7 @@ framework to reproduce three of the paper's main results:
 
 - **Algorithm:** MMA accumulation algorithm
 - **Program:** vLLM with the MMA Emulation kernels; lm-eval-harness for evaluation
-- **Compilation:** Not required by default — prebuilt in the Docker image; optionally build from source with uv (needs CUDA Toolkit 12.8, g++ 10+)
+- **Compilation:** Not required by default — prebuilt in the Docker image; optionally build from source with uv (needs CUDA Toolkit 12.8.1, g++ 10+)
 - **Model:** LLaMA-3.1-8B-Instruct (FP8 and NVFP4 checkpoints from HuggingFace)
 - **Data set:** WikiText-2, ARC-Challenge, ARC-Easy, PIQA, WinoGrande, GSM8K, HumanEval (via lm-eval-harness)
 - **Run-time environment:** Docker, NVIDIA Container Toolkit
@@ -60,7 +60,7 @@ the host requires only **Docker** and the **NVIDIA Container Toolkit**. The imag
 includes:
 
 - the forked **vLLM** with the **MMA-Emu** kernels, prebuilt for SM90 / SM120
-- **CUDA 12.8**, **PyTorch 2.8.0**
+- **CUDA 12.8.1**, **PyTorch 2.8.0**
 - **lm-eval-harness 0.4.9.1**, **transformers 4.55.2**, **matplotlib**
 
 ### 3.4 Models and data sets

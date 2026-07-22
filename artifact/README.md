@@ -39,7 +39,7 @@ ships the paper's software environment, so nothing needs to be built:
   **Blackwell (SM120)**.
 - The native GEMM path runs on the tensor cores via **CUTLASS v4.0.0**.
 - Pinned to the environment the paper's numbers came from: torch 2.8.0 / CUDA
-  12.8, `lm_eval==0.4.9.1`, `transformers==4.55.2`, and matplotlib for the plots.
+  12.8.1, `lm_eval==0.4.9.1`, `transformers==4.55.2`, and matplotlib for the plots.
 
 ### Verify the image
 
@@ -61,7 +61,7 @@ the image, and compiled for Hopper (SM90) and Blackwell (SM120) (~30 min).
 
 **Host prerequisites:**
 
-- **CUDA Toolkit 12.8** (`nvcc` on `PATH`)
+- **CUDA Toolkit 12.8.1** (`nvcc` on `PATH`)
 - **C++ compiler** (g++ 10 or newer)
 - **Python 3.12**
 - **uv** (<https://docs.astral.sh/uv/>)
