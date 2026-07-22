@@ -24,7 +24,7 @@ framework to reproduce three of the paper's main results:
 - **Compilation:** Not required by default — prebuilt in the Docker image; optionally build from source with uv (needs CUDA Toolkit 12.8.1, g++ 10+)
 - **Model:** LLaMA-3.1-8B-Instruct (FP8 and NVFP4 checkpoints from HuggingFace)
 - **Data set:** WikiText-2, ARC-Challenge, ARC-Easy, PIQA, WinoGrande, GSM8K, HumanEval (via lm-eval-harness)
-- **Run-time environment:** Linux with Docker (≥ 19.03) and a recent NVIDIA Container Toolkit; NVIDIA driver ≥ 570.124.06 for the image's CUDA 12.8.1
+- **Run-time environment:** Linux with Docker (≥ 19.03) and the NVIDIA Container Toolkit (≥ 1.17 recommended, tested 1.18.1); NVIDIA driver ≥ 570.124.06 for the image's CUDA 12.8.1
 - **Hardware:** x86_64 CPU; NVIDIA H100 (Hopper) and RTX PRO 6000 (Blackwell)
 - **Metrics:** WikiText-2 perplexity, task accuracy (exact-match, pass@1, acc, acc_norm), and per-sample log-probabilities
 - **Output:** Cross-architecture correctness validation results (Table 6) and reproduced figures (Figure 6(a) and Figure 11)
