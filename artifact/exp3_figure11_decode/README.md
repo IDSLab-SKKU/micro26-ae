@@ -30,6 +30,11 @@ directory, `exp3_figure11_decode/`.
 Runs the FP8 sweep (9 runs) then the NVFP4 sweep (16 runs), each saved under its
 own `results/` (`fp8_cofda/results/`, `nvfp4_gdfs/results/`).
 
+To run just one sweep, pass `--fp8` or `--nvfp4` (e.g. `./run_figure11.sh --nvfp4`);
+with neither, both run. This is handy for resuming if a run is interrupted — the
+two sweeps write to separate `results/` directories, so you can rerun only the
+one that did not finish.
+
 **2. Plot:**
 
 ```bash
