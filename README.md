@@ -34,13 +34,14 @@ framework to reproduce three of the paper's main results:
 - **Experiment time (approx.):** ~65 h (~3 days) on a single RTX PRO 6000, plus a ~5 min run on an H100
 - **Publicly available?:** Yes
 - **Code license (if publicly available)?:** Apache 2.0
-- **Archived (provide DOI)?:** TBA
+- **Archived (provide DOI)?:** 10.5281/zenodo.21505180
 
 ## 3. Description
 
 ### 3.1 How to access
 
 - **GitHub:** <https://github.com/IDSLab-SKKU/micro26-ae>
+- **Archived (Zenodo):** 10.5281/zenodo.21505180
 
 ### 3.2 Hardware dependencies
 
