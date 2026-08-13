@@ -116,8 +116,25 @@ def fmt(value: float) -> str:
     return f"{value:.6f}" if abs(value) < 100 else f"{value:.4f}"
 
 
+# Architecture names by compute-capability number, mirroring _ARCH_TAGS in
+# scripts/run_experiment.py. Blackwell covers both SM100 (B200) and SM120 (the
+# RTX PRO 6000 we report); either is a valid emulated-Hopper side. Results
+# written before SM100 was in that table carry a bare "sm100" tag instead, so
+# the capability number — always recorded alongside — is the reliable source.
+_SM_ARCH = {90: "hopper", 100: "blackwell", 120: "blackwell"}
+
+
 def arch_of(result: dict) -> str:
-    return (result.get("device") or {}).get("arch") or "unknown"
+    device = result.get("device") or {}
+    return _SM_ARCH.get(device.get("sm")) or device.get("arch") or "unknown"
+
+
+def device_of(result: dict) -> str:
+    """The GPU name, with its capability so the two Blackwells stay apart."""
+    device = result.get("device") or {}
+    name = device.get("name") or "?"
+    sm = device.get("sm")
+    return f"{name} (sm{sm})" if sm is not None else name
 
 
 def compare(pair: dict) -> list[str]:
@@ -135,7 +152,7 @@ def compare(pair: dict) -> list[str]:
         else:
             got = arch_of(res)
             warn = "" if got == exp else f"  !! expected {exp}, got {got}"
-            dev = (res.get("device") or {}).get("name", "?")
+            dev = device_of(res)
             print(f"  {side:16} {got:10} {dev}{warn}")
             md.append(f"- **{side}**: {got} — {dev}"
                       f"{' — ARCH MISMATCH' if warn else ''}")

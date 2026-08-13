@@ -491,7 +491,9 @@ def format_time(seconds: float) -> str:
 # Short architecture tags, keyed by compute-capability number (major*10+minor).
 # Table 6 is a cross-architecture comparison, so results are stamped with the
 # GPU they ran on and the two machines stay distinguishable once collected.
-_ARCH_TAGS = {90: "hopper", 120: "blackwell"}
+# Blackwell covers both SM100 (B200) and SM120 (the RTX PRO 6000 we report);
+# run_table6.sh accepts either for the emulated-Hopper side.
+_ARCH_TAGS = {90: "hopper", 100: "blackwell", 120: "blackwell"}
 
 
 def get_device_info() -> dict:
