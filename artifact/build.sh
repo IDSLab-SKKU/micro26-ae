@@ -19,9 +19,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 
-# Only the architectures the artifact runs on — Hopper (SM90), Blackwell (SM120)
-# — and skip FlashAttention-3 (unused here).
-export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-9.0 12.0}"
+# Only the architectures the artifact runs on — Hopper (SM90), Blackwell
+# (SM100 data-center, SM120 workstation) — and skip FlashAttention-3 (unused
+# here).
+export TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST:-9.0 10.0 12.0}"
 export VLLM_BUILD_FA3="${VLLM_BUILD_FA3:-0}"
 
 CU="https://download.pytorch.org/whl/cu128"

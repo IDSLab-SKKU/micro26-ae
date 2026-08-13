@@ -167,10 +167,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 #
 # Only the architectures the artifact runs on. The FP8 emulation needs SM89 or
 # later and the NVFP4 emulation needs Blackwell, so the older entries upstream
-# carries would compile nothing of ours while inflating the image. Written
-# without the 'a' suffix on purpose: cuda_archs_loose_intersection promotes 9.0
-# to 9.0a where a kernel demands it (the SM90 CUTLASS FP8 GEMM does).
-ARG torch_cuda_arch_list='9.0 12.0'
+# carries would compile nothing of ours while inflating the image. Blackwell
+# covers both 10.0 (data-center: B200) and 12.0 (workstation: RTX PRO 6000).
+# Written without the 'a' suffix on purpose: cuda_archs_loose_intersection
+# promotes 9.0/10.0 to 9.0a/10.0a where a kernel demands it (the SM90 and SM100
+# CUTLASS FP8 GEMMs do).
+ARG torch_cuda_arch_list='9.0 10.0 12.0'
 ENV TORCH_CUDA_ARCH_LIST=${torch_cuda_arch_list}
 #################### BASE BUILD IMAGE ####################
 
