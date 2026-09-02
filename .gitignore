@@ -175,6 +175,7 @@ cython_debug/
 .idea/
 
 # VSCode
+.vscode/
 
 # Claude
 CLAUDE.md
