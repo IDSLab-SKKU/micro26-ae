@@ -1,1 +1,4 @@
 kernel_*.cu
+# Lab security: exclude local editor configuration
+.vscode/
+.cursor/

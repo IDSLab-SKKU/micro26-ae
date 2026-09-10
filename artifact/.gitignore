@@ -5,3 +5,6 @@ figure*.png
 # Experiment result outputs — produced by run_experiment.py, kept local only.
 # (The results/ directories are preserved by their .gitkeep files.)
 **/results/*.json
+# Lab security: exclude local editor configuration
+.vscode/
+.cursor/
