@@ -15,8 +15,8 @@
 # Any other arguments pass through to the runs, e.g.  ./run_figure11.sh --nvfp4 --gpu 1
 # or  ./run_figure11.sh --overwrite
 #
-# It stops at the first failure (set -e), so a broken run does not silently skip
-# the rest of the sweep.
+# A failed run does not stop the sweeps: both still run to the end, the
+# failures are listed, and the script exits non-zero if either sweep had one.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."         # → artifact/ (where scripts/run_experiment.py lives)
@@ -45,14 +45,23 @@ if [[ "$cap" != "120" ]]; then
     echo "WARNING: compute capability is '${cap:-unknown}', not 12.0 (SM120)."
 fi
 
+# A sweep that fails still lets the other run; remember it for the exit status.
+failed=()
+
 if [[ "$run_fp8" == true ]]; then
     echo "=== Figure 11(a): FP8 CoFDA decode sweep (9 runs) ==="
-    python3 scripts/run_experiment.py --exp exp3_figure11_decode/fp8_cofda "${passthrough[@]}"
+    python3 scripts/run_experiment.py --exp exp3_figure11_decode/fp8_cofda "${passthrough[@]}" \
+        || failed+=("FP8 (fp8_cofda)")
 fi
 
 if [[ "$run_nvfp4" == true ]]; then
     echo "=== Figure 11(b): NVFP4 GDFS decode sweep (16 runs) ==="
-    python3 scripts/run_experiment.py --exp exp3_figure11_decode/nvfp4_gdfs "${passthrough[@]}"
+    python3 scripts/run_experiment.py --exp exp3_figure11_decode/nvfp4_gdfs "${passthrough[@]}" \
+        || failed+=("NVFP4 (nvfp4_gdfs)")
 fi
 
+if (( ${#failed[@]} )); then
+    echo "=== Figure 11: failed runs in ${failed[*]} — rerun ./run_figure11.sh to retry them ===" >&2
+    exit 1
+fi
 echo "=== Figure 11 done ==="

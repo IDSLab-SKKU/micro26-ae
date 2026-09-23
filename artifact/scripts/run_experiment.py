@@ -993,6 +993,15 @@ def main():
 
         try:
             success = run_single_combination(_config, combo, run_name, output_path)
+            if success:
+                # A task that raised is recorded with an error; the result is
+                # saved but not complete, so the run counts as failed (and a
+                # resume re-runs it).
+                problem = completed_result_status(output_path, combo, _config)
+                if problem is not None:
+                    print(f"\n[FAILED] {run_name}: {problem}")
+                    sys.stdout.flush()
+                    success = False
             run_results.append((run_name, "OK" if success else "FAILED", output_path))
         except Exception as e:
             print(f"\nERROR running {run_name}: {e}")
@@ -1014,14 +1023,23 @@ def main():
     print(f"\nResults saved to: {output_dir}")
     sys.stdout.flush()
 
-    print("\nExperiment complete. Exiting...")
+    # A failed run does not stop the sweep; it is reported here and in the exit
+    # status. Skipped (already complete) runs count as success.
+    failed = [name for name, status, _ in run_results if status == "FAILED"]
+    if failed:
+        print(f"\n{len(failed)} of {len(run_results)} run(s) FAILED: {', '.join(failed)}")
+        print("Run the same command again to retry just these "
+              "(complete runs are skipped).")
+    else:
+        print("\nExperiment complete. Exiting...")
     sys.stdout.flush()
 
     # Clean up multiprocessing resources before exit
     cleanup_multiprocessing()
 
-    # Force clean exit to avoid any remaining cleanup issues
-    os._exit(0)
+    # Force a clean exit (skips leftover interpreter cleanup that can hang or
+    # warn); the status is non-zero if any run failed.
+    os._exit(1 if failed else 0)
 
 
 if __name__ == "__main__":

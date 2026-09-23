@@ -8,7 +8,8 @@
 # Re-running resumes: combinations that already have a complete result in
 # results/ are skipped. Pass --overwrite to re-run them all.
 #
-# It stops at the first failure (set -e). Plot the result afterwards with:
+# A failed run does not stop the sweep: the rest still run, the failures are
+# listed at the end, and the script exits non-zero. Plot the result with:
 #   python3 figure6a.py
 set -euo pipefail
 
