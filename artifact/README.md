@@ -115,8 +115,7 @@ README has the full step-by-step.
 
 ### [exp1](exp1_table6_cross_arch/) — cross-architecture correctness
 
-- **Machine:** H100 (Hopper) + RTX PRO 6000 (Blackwell). A B200 (SM100) also
-  works as the Blackwell side.
+- **Machine:** H100 (Hopper) + RTX PRO 6000 or B200 (Blackwell).
 - **Run** — same script on each machine, then compare:
   1. On the **H100**: `./run_table6.sh` (native Hopper)
   2. On the **RTX PRO 6000**: copy the H100 results over, then `./run_table6.sh` (emulated Hopper)
@@ -126,7 +125,7 @@ README has the full step-by-step.
 
 ### [exp2](exp2_figure6a_fp8_cofda/) — FP8 CoFDA design space
 
-- **Machine:** RTX PRO 6000 (Blackwell).
+- **Machine:** RTX PRO 6000 or B200 (Blackwell).
 - **Run:**
   1. `./run_figure6a.sh` — the 36-run sweep
   2. `python3 figure6a.py` — plot
@@ -135,7 +134,7 @@ README has the full step-by-step.
 
 ### [exp3](exp3_figure11_decode/) — decode-phase analysis
 
-- **Machine:** RTX PRO 6000 (Blackwell).
+- **Machine:** RTX PRO 6000 or B200 (Blackwell).
 - **Run:**
   1. `./run_figure11.sh` — the FP8 then NVFP4 sweeps
   2. `python3 figure11.py` — plot

@@ -38,11 +38,11 @@ if [[ "$run_fp8" == false && "$run_nvfp4" == false ]]; then
     run_nvfp4=true
 fi
 
-# Check the GPU is SM120 (compute capability 12.0); warn up front if it is not.
+# Check the GPU is Blackwell (SM120 or SM100); warn up front if it is not.
 cap="$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null \
        | head -1 | tr -d ' .' || true)"
-if [[ "$cap" != "120" ]]; then
-    echo "WARNING: compute capability is '${cap:-unknown}', not 12.0 (SM120)."
+if [[ "$cap" != "120" && "$cap" != "100" ]]; then
+    echo "WARNING: compute capability is '${cap:-unknown}', not Blackwell (12.0 or 10.0)."
 fi
 
 # A sweep that fails still lets the other run; remember it for the exit status.

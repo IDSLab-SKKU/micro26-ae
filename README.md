@@ -31,7 +31,7 @@ framework to reproduce three of the paper's main results:
 - **Model:** LLaMA-3.1-8B-Instruct (FP8 and NVFP4 checkpoints from HuggingFace)
 - **Data set:** WikiText-2, ARC-Challenge, ARC-Easy, PIQA, WinoGrande, GSM8K, HumanEval (via lm-eval-harness)
 - **Run-time environment:** Linux with Docker (≥ 19.03) and the NVIDIA Container Toolkit (≥ 1.17 recommended, tested 1.18.1); NVIDIA driver ≥ 570.124.06 for the image's CUDA 12.8.1
-- **Hardware:** x86_64 CPU; NVIDIA H100 (Hopper) and RTX PRO 6000 (Blackwell); a B200 (Blackwell, SM100) can stand in for the RTX PRO 6000 in Table 6
+- **Hardware:** x86_64 CPU; NVIDIA H100 (Hopper) and RTX PRO 6000 (Blackwell); a B200 (Blackwell, SM100) can replace the RTX PRO 6000
 - **Metrics:** WikiText-2 perplexity, task accuracy (exact-match, pass@1, acc, acc_norm), and per-sample log-probabilities
 - **Output:** Cross-architecture correctness validation results (Table 6) and reproduced figures (Figure 6(a) and Figure 11)
 - **Experiments:** Each reproduction includes a run script (`run_*.sh`) and a step-by-step README
@@ -59,7 +59,7 @@ because Table 6 is a cross-architecture swap test:
     - **Minimum:** Max-Q Edition
     - **Preferred:** Workstation (WS) Edition
 
-A **B200** (Blackwell, SM100) can also run the Blackwell side of Table 6.
+A **B200** (Blackwell, SM100) can replace the RTX PRO 6000 in every experiment.
 
 ### 3.3 Software dependencies
 
