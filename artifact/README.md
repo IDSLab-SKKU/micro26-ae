@@ -129,6 +129,10 @@ everything and replace existing results; `--dry-run` marks each combination
 ./run_figure6a.sh --overwrite   # start it over
 ```
 
+A run that fails does not stop the sweep: the remaining combinations still run,
+the failures are listed at the end, and the script exits non-zero. Running the
+same command again retries only the failed (and any unfinished) combinations.
+
 ## GPU device selection
 
 Each `run_*.sh` passes its arguments through to the runner — append `--gpu N` to
