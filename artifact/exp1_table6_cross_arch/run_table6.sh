@@ -13,6 +13,8 @@
 #   python3 scripts/compare.py
 #
 # Any arguments pass through, e.g.  ./run_table6.sh --gpu 1.  Stops on failure.
+# A re-run skips the run if its complete result already exists; pass --overwrite
+# to run it again.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."         # → artifact/ (where scripts/run_experiment.py lives)

@@ -2,15 +2,18 @@
 # Figure 11 — run the FP8 and NVFP4 decode sweeps.
 #
 # By default both sweeps run in sequence (FP8 then NVFP4). To run just one, pass
-# --fp8 or --nvfp4 — handy for resuming after an interrupted run: the FP8 sweep
-# and the NVFP4 sweep write to separate results/ directories, so if one finishes
-# and the other is cut short, rerun only the unfinished sweep.
+# --fp8 or --nvfp4.
+#
+# Re-running resumes: combinations that already have a complete result in their
+# results/ directory are skipped, so an interrupted sweep picks up where it
+# stopped. Pass --overwrite to re-run them all.
 #
 #   ./run_figure11.sh              # both sweeps (default)
 #   ./run_figure11.sh --fp8        # only the FP8 CoFDA sweep
 #   ./run_figure11.sh --nvfp4      # only the NVFP4 GDFS sweep
 #
 # Any other arguments pass through to the runs, e.g.  ./run_figure11.sh --nvfp4 --gpu 1
+# or  ./run_figure11.sh --overwrite
 #
 # It stops at the first failure (set -e), so a broken run does not silently skip
 # the rest of the sweep.
