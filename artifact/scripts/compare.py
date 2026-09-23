@@ -16,10 +16,20 @@ two runs should produce identical numbers, not merely close ones.
 
     python3 scripts/compare.py
     python3 scripts/compare.py --out cmp.md   # also write the table as markdown
+
+Exit status:
+    0  match          — every task's score identical, every logprob bit-identical
+    1  mismatch       — some score or logprob differs
+    2  cannot compare — a result or samples file is missing, a side ran on the
+                        wrong architecture, or there is nothing to compare
+A mismatch takes precedence: if anything that could be compared differs, 1.
 """
 import argparse
 import json
+import sys
 from pathlib import Path
+
+EXIT_MATCH, EXIT_MISMATCH, EXIT_INCOMPLETE = 0, 1, 2
 
 EXPERIMENTS = Path(__file__).resolve().parent.parent
 BASE = "exp1_table6_cross_arch"
@@ -93,12 +103,14 @@ def sample_logprobs(sample: dict) -> list[float]:
 
 
 def logprob_task_stats(left_list: list, right_list: list) -> tuple:
-    """(total, identical, max_abs_diff, prompt_hash_mismatches) for one task."""
+    """(total, identical, max_abs_diff, prompt_hash_mismatches, unmatched) for
+    one task; unmatched counts samples logged on only one side."""
     left = {s.get("doc_id"): s for s in left_list}
     right = {s.get("doc_id"): s for s in right_list}
     ids = sorted(set(left) & set(right))
     total = identical = hash_mm = 0
     maxd = 0.0
+    unmatched = len(set(left) ^ set(right))
     for i in ids:
         if left[i].get("prompt_hash") != right[i].get("prompt_hash"):
             hash_mm += 1
@@ -108,7 +120,7 @@ def logprob_task_stats(left_list: list, right_list: list) -> tuple:
                 identical += 1
             else:
                 maxd = max(maxd, abs(a - b))
-    return total, identical, maxd, hash_mm
+    return total, identical, maxd, hash_mm, unmatched
 
 
 def fmt(value: float) -> str:
@@ -137,18 +149,22 @@ def device_of(result: dict) -> str:
     return f"{name} (sm{sm})" if sm is not None else name
 
 
-def compare(pair: dict) -> list[str]:
-    """Print scores and per-sample logprobs side by side, task by task."""
+def compare(pair: dict) -> tuple[list[str], int]:
+    """Print scores and per-sample logprobs side by side, task by task.
+
+    Returns the markdown lines and the exit status (EXIT_*)."""
     (lh, lp, lexp), (rh, rp, rexp) = pair["left"], pair["right"]
     md = ["# Table 6 — cross-architecture reproduction\n"]
     title = "Cross-architecture reproduction: emulate Hopper (F=13)  vs  native H100"
     print(f"\n{'=' * 74}\n{title}\n{'=' * 74}")
 
     lres, rres = load_result(lp), load_result(rp)
+    incomplete = []     # reasons the comparison is not a full check
     for side, res, exp, path in ((lh, lres, lexp, lp), (rh, rres, rexp, rp)):
         if res is None:
             print(f"  [missing] {side}: no result under {path}/results/")
             md.append(f"- **{side}**: missing — run `{path}`")
+            incomplete.append(f"{side}: result missing")
         else:
             got = arch_of(res)
             warn = "" if got == exp else f"  !! expected {exp}, got {got}"
@@ -156,20 +172,25 @@ def compare(pair: dict) -> list[str]:
             print(f"  {side:16} {got:10} {dev}{warn}")
             md.append(f"- **{side}**: {got} — {dev}"
                       f"{' — ARCH MISMATCH' if warn else ''}")
+            if warn:
+                incomplete.append(f"{side}: ran on {got}, expected {exp}")
 
     if lres is None or rres is None:
         print("\n  -> both results are needed to compare.")
         md.append("\n_Both results are needed to compare._\n")
-        return md
+        return md, verdict(md, False, incomplete)
 
     lsamp, rsamp = load_samples(lp), load_samples(rp)
     have_lp = lsamp is not None and rsamp is not None
     if not have_lp:
         which = lh if lsamp is None else rh
         print(f"\n  (no per-sample log for {which}; showing scores only)")
+        incomplete.append(f"{which}: per-sample log (_samples.json) missing")
 
     lm, rm = collect_metrics(lres), collect_metrics(rres)
     tasks = sorted({t for (t, _) in lm} | {t for (t, _) in rm})
+    if not tasks:
+        incomplete.append("no task scores in either result")
 
     header = (f"  {'task':15}{'metric':11}{'score':>10}   "
               f"{'logprobs (identical/total)':>26}   match")
@@ -188,13 +209,15 @@ def compare(pair: dict) -> list[str]:
         a0 = lm.get((task, m0))
 
         if have_lp and task in lsamp and task in rsamp:
-            tot, ident, maxd, hmm = logprob_task_stats(lsamp[task], rsamp[task])
+            tot, ident, maxd, hmm, unm = logprob_task_stats(lsamp[task], rsamp[task])
             lp_total += tot
             lp_ident += ident
-            lp_ok = (ident == tot) and (hmm == 0)
+            lp_ok = (ident == tot) and (hmm == 0) and (unm == 0)
             lp_cell = f"{ident:,} / {tot:,}"
         else:
-            tot, lp_ok, lp_cell, maxd, hmm = None, True, "—", 0.0, 0
+            tot, lp_ok, lp_cell, maxd, hmm, unm = None, True, "—", 0.0, 0, 0
+            if have_lp:
+                incomplete.append(f"{task}: per-sample log on only one side")
 
         task_ok = score_ok and lp_ok
         n_tasks += 1
@@ -219,6 +242,8 @@ def compare(pair: dict) -> list[str]:
                    f"max|Δ|={maxd:.3g}")
             if hmm:
                 msg += f", {hmm} prompt-hash mismatch"
+            if unm:
+                msg += f", {unm} sample(s) logged on only one side"
             details.append(msg)
 
     print(f"  {'-' * (len(header) - 2)}")
@@ -233,7 +258,20 @@ def compare(pair: dict) -> list[str]:
     for d in details:
         print(d)
         md.append(f"- {d.strip().lstrip('! ')}")
-    return md
+    return md, verdict(md, tasks_ok < n_tasks, incomplete)
+
+
+def verdict(md: list[str], mismatch: bool, incomplete: list[str]) -> int:
+    """Print the overall result and return the exit status."""
+    if mismatch:
+        status, line = EXIT_MISMATCH, "MISMATCH — the two sides differ"
+    elif incomplete:
+        status, line = EXIT_INCOMPLETE, "CANNOT COMPARE — " + "; ".join(incomplete)
+    else:
+        status, line = EXIT_MATCH, "MATCH — scores identical, logprobs bit-identical"
+    print(f"\n  Result: {line}  (exit {status})")
+    md.append(f"\n**Result:** {line}\n")
+    return status
 
 
 def main():
@@ -243,10 +281,11 @@ def main():
                     help="also write the comparison as markdown to this file")
     args = ap.parse_args()
 
-    md = compare(PAIR)
+    md, status = compare(PAIR)
     if args.out:
         args.out.write_text("\n".join(md) + "\n")
         print(f"\nMarkdown written to: {args.out}")
+    sys.exit(status)
 
 
 if __name__ == "__main__":

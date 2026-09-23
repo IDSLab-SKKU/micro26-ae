@@ -57,6 +57,15 @@ Expected — the emulated Hopper config (on Blackwell) and the native Hopper
 hardware (H100) agree on every task: every score is **identical** and every
 logprob **bit-identical**.
 
+`compare.sh` ends with a one-line `Result:` and sets its exit status accordingly,
+so it can be checked from a script:
+
+| Exit | Result | Meaning |
+| --- | --- | --- |
+| 0 | `MATCH` | every score identical, every logprob bit-identical |
+| 1 | `MISMATCH` | some score or logprob differs |
+| 2 | `CANNOT COMPARE` | a result or `_samples.json` is missing, or a side ran on the wrong architecture |
+
 ## Optional — the emulation kernels
 
 The kernels we implemented live in
