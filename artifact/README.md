@@ -61,7 +61,8 @@ For reference, the image
 ships the paper's software environment, so nothing needs to be built:
 
 - **vLLM prebuilt**, with the MMA-Emu kernels compiled for **Hopper (SM90)** and
-  **Blackwell (SM120)**.
+  **Blackwell (SM100 and SM120)**. SM100 (B200) support was added during artifact
+  evaluation.
 - The native GEMM path runs on the tensor cores via **CUTLASS v4.0.0**.
 - Pinned to the environment the paper's numbers came from: torch 2.8.0 / CUDA
   12.8.1, `lm_eval==0.4.9.1`, `transformers==4.55.2`, and matplotlib for the plots.
@@ -82,7 +83,7 @@ the vLLM wheel with the MMA-Emu kernels is installed and loads.
 We recommend the prebuilt Docker image above. If you would rather build from
 source, run `./build.sh` from `artifact/` — it builds vLLM and the MMA-Emu
 kernels with [uv](https://docs.astral.sh/uv/), pinned to the same environment as
-the image, and compiled for Hopper (SM90) and Blackwell (SM120) (~30 min).
+the image, and compiled for Hopper (SM90) and Blackwell (SM100, SM120) (~30 min).
 
 **Host prerequisites:**
 
@@ -115,7 +116,8 @@ README has the full step-by-step.
 
 ### [exp1](exp1_table6_cross_arch/) — cross-architecture correctness
 
-- **Machine:** H100 (Hopper) + RTX PRO 6000 (Blackwell).
+- **Machine:** H100 (Hopper) + RTX PRO 6000 (Blackwell). A B200 (SM100) also
+  works as the Blackwell side.
 - **Run** — same script on each machine, then compare:
   1. On the **H100**: `./run_table6.sh` (native Hopper)
   2. On the **RTX PRO 6000**: copy the H100 results over, then `./run_table6.sh` (emulated Hopper)

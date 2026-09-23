@@ -1,5 +1,11 @@
 # Artifact Evaluation for MICRO'26
 
+> **Open-source release:** this work is released as
+> **[NADPE](https://github.com/IDSLab-SKKU/NADPE)** (*Not All Dot Products Are
+> Equal*), a vLLM fork that runs LLM inference under an arbitrary MMA
+> accumulation configuration. This repository packages the artifact for MICRO'26
+> Artifact Evaluation; for using or building on the emulator, start from NADPE.
+
 ## 1. Abstract
 
 This is the artifact of *Not All Dot Products Are Equal: The Hidden MMA Arithmetic
@@ -25,7 +31,7 @@ framework to reproduce three of the paper's main results:
 - **Model:** LLaMA-3.1-8B-Instruct (FP8 and NVFP4 checkpoints from HuggingFace)
 - **Data set:** WikiText-2, ARC-Challenge, ARC-Easy, PIQA, WinoGrande, GSM8K, HumanEval (via lm-eval-harness)
 - **Run-time environment:** Linux with Docker (≥ 19.03) and the NVIDIA Container Toolkit (≥ 1.17 recommended, tested 1.18.1); NVIDIA driver ≥ 570.124.06 for the image's CUDA 12.8.1
-- **Hardware:** x86_64 CPU; NVIDIA H100 (Hopper) and RTX PRO 6000 (Blackwell)
+- **Hardware:** x86_64 CPU; NVIDIA H100 (Hopper) and RTX PRO 6000 (Blackwell); a B200 (Blackwell, SM100) can stand in for the RTX PRO 6000 in Table 6
 - **Metrics:** WikiText-2 perplexity, task accuracy (exact-match, pass@1, acc, acc_norm), and per-sample log-probabilities
 - **Output:** Cross-architecture correctness validation results (Table 6) and reproduced figures (Figure 6(a) and Figure 11)
 - **Experiments:** Each reproduction includes a run script (`run_*.sh`) and a step-by-step README
@@ -53,6 +59,13 @@ because Table 6 is a cross-architecture swap test:
     - **Minimum:** Max-Q Edition
     - **Preferred:** Workstation (WS) Edition
 
+**SM100 (B200) support.** Added during artifact evaluation: the image and
+`build.sh` also target the data-center Blackwell **B200 (SM100)**, and
+`run_table6.sh` detects it. Because the emulation kernels use plain CUDA-core
+arithmetic with no architecture-specific instructions, a B200 can run the
+Blackwell (emulated-Hopper) side of Table 6. The paper's numbers were measured on
+the RTX PRO 6000, and exp2/exp3 are documented for it.
+
 ### 3.3 Software dependencies
 
 All software is packaged in the prebuilt Docker image
@@ -60,7 +73,7 @@ All software is packaged in the prebuilt Docker image
 the host requires only **Docker** and the **NVIDIA Container Toolkit**. The image
 includes:
 
-- the forked **vLLM** with the **MMA-Emu** kernels, prebuilt for SM90 / SM120
+- the forked **vLLM** with the **MMA-Emu** kernels, prebuilt for SM90 / SM100 / SM120
 - **CUDA 12.8.1**, **PyTorch 2.8.0**
 - **lm-eval-harness 0.4.9.1**, **transformers 4.55.2**, **matplotlib**
 

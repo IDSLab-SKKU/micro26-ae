@@ -36,7 +36,9 @@ compare.
 
 The native-Hopper results are saved under `h100/native/results/`.
 
-**2. On the RTX PRO 6000 (Blackwell).** Copy the H100's `h100/native/results/`
+**2. On the RTX PRO 6000 (Blackwell).** A B200 (SM100) works here too:
+`run_table6.sh` detects either Blackwell and runs the same emulated-Hopper
+config. Copy the H100's `h100/native/results/`
 into this clone first — each result JSON records the GPU it ran on, so the two
 machines stay distinguishable — then run:
 
