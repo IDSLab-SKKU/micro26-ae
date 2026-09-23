@@ -5,6 +5,9 @@
 # the numbers do not depend on the host GPU's native tensor cores. Any arguments
 # pass through, e.g.  ./run.sh --gpu 1
 #
+# Re-running resumes: combinations that already have a complete result in
+# results/ are skipped. Pass --overwrite to re-run them all.
+#
 # It stops at the first failure (set -e). Plot the result afterwards with:
 #   python3 figure6a.py
 set -euo pipefail

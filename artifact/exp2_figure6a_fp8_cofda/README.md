@@ -26,6 +26,10 @@ directory `exp2_figure6a_fp8_cofda/`.
 
 Each combination is saved under `results/<combo>.json`.
 
+If the sweep is interrupted, run `./run_figure6a.sh` again: it resumes, skipping
+combinations that already have a complete result. `--dry-run` shows what would
+be skipped, and `--overwrite` re-runs all 36.
+
 **2. Plot:**
 
 ```bash

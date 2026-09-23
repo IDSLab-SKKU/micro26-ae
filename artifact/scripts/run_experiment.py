@@ -23,6 +23,13 @@ Usage:
 
     # Pin to a GPU
     python scripts/run_experiment.py --exp exp1_table6_cross_arch/h100/native --gpu 1
+
+    # Re-run every combination, replacing results that already exist
+    python scripts/run_experiment.py --exp exp2_figure6a_fp8_cofda --overwrite
+
+A sweep resumes by default: a combination whose result JSON already exists in
+results/ (same sweep parameters, every task evaluated without error) is skipped,
+so an interrupted sweep continues where it stopped. --overwrite disables this.
 """
 
 import os
@@ -132,6 +139,7 @@ Examples:
   python scripts/run_experiment.py --exp exp2_figure6a_fp8_cofda
   python scripts/run_experiment.py --exp exp2_figure6a_fp8_cofda --dry-run
   python scripts/run_experiment.py --exp exp1_table6_cross_arch/h100/native --gpu 1
+  python scripts/run_experiment.py --exp exp2_figure6a_fp8_cofda --overwrite
         """
     )
     parser.add_argument(
@@ -153,6 +161,11 @@ Examples:
     parser.add_argument(
         "--gpu", type=str, default=None,
         help="CUDA device index to run on (e.g., '0' or '1'); use one GPU"
+    )
+    parser.add_argument(
+        "--overwrite", action="store_true",
+        help="Re-run every combination and replace existing results "
+             "(default: skip combinations that already have a complete result)"
     )
     return parser.parse_args()
 
@@ -331,6 +344,50 @@ def get_run_name(combo: dict, config: dict) -> str:
     return "_".join(parts)
 
 
+def completed_result_status(output_path: Path, combo: dict,
+                            config: dict) -> str | None:
+    """Why an existing result can NOT be reused, or None if it is complete.
+
+    A result counts as complete when its JSON parses, it was written for the
+    same precision and sweep parameters, it holds every configured task, and no
+    task recorded an error (plus the samples file, if the config logs samples).
+    The runner writes the result JSON last and atomically, so a run cut short
+    never leaves one behind.
+    """
+    import json
+    from tasks import resolve_task_config  # stdlib-only, safe before CUDA
+
+    if not output_path.exists():
+        return "no result yet"
+    try:
+        result = json.loads(output_path.read_text())
+    except (OSError, ValueError):
+        return "result JSON is unreadable"
+
+    if result.get("precision") != _precision:
+        return f"result is for precision {result.get('precision')!r}"
+    if result.get("sweep_params", {}) != combo:
+        return "result has different sweep parameters"
+
+    eval_config = config.get("eval", {})
+    # Unknown task keys are skipped by the run itself, so they are not expected.
+    wanted = [k for k in eval_config.get("tasks", ["wikitext"])
+              if resolve_task_config(k) is not None]
+    tasks = result.get("tasks", {})
+    missing = [k for k in wanted if k not in tasks]
+    if missing:
+        return f"result is missing task(s): {', '.join(missing)}"
+    failed = [k for k in wanted if "error" in tasks[k]]
+    if failed:
+        return f"task(s) failed in the earlier run: {', '.join(failed)}"
+
+    if eval_config.get("log_samples", False):
+        samples_path = output_path.parent / f"{output_path.stem}_samples.json"
+        if not samples_path.exists():
+            return "samples file is missing"
+    return None
+
+
 def export_mma_emu_to_env(emu_config: dict):
     """Export the MMA emulation settings of a run to environment variables."""
     env_vars = _pconfig["env_vars"]
@@ -434,11 +491,20 @@ if _args.dry_run:
             else:
                 print(f"  {param}: [{values}]")
 
-    print(f"\nTotal runs: {len(_combinations)}")
+    print(f"\nTotal runs: {len(_combinations)}"
+          + (" (--overwrite: all re-run)" if _args.overwrite else ""))
+    n_skip = 0
     for i, combo in enumerate(_combinations, 1):
         run_name = get_run_name(combo, _config)
         params = ", ".join(f"{k}={v}" for k, v in combo.items()) if combo else "(no sweep)"
-        print(f"  {i}. {run_name:<15} ({params})")
+        done = (not _args.overwrite and completed_result_status(
+            exp_path / "results" / f"{run_name}.json", combo, _config) is None)
+        n_skip += done
+        mark = "[SKIP]" if done else "[RUN] "
+        print(f"  {i}. {mark} {run_name:<15} ({params})")
+    if n_skip:
+        print(f"\n{n_skip} run(s) already complete and would be skipped "
+              "(pass --overwrite to re-run them).")
 
     print(f"\nRun with: python scripts/run_experiment.py --exp {_args.exp}")
     sys.exit(0)
@@ -769,6 +835,14 @@ def print_results_table(results: dict):
     print("=" * 70)
 
 
+def write_json_atomic(path: Path, data) -> None:
+    """Write JSON via a temp file + rename, so a crash never leaves a partial file."""
+    tmp_path = path.with_name(path.name + ".tmp")
+    with open(tmp_path, "w") as f:
+        json.dump(data, f, indent=2, default=str)
+    os.replace(tmp_path, path)
+
+
 def run_single_combination(
     config: dict,
     combo: dict,
@@ -844,13 +918,12 @@ def run_single_combination(
                     samples_data[task_key] = task_data.pop("samples")
             if samples_data:
                 samples_path = output_path.parent / f"{output_path.stem}_samples.json"
-                with open(samples_path, "w") as f:
-                    json.dump(samples_data, f, indent=2, default=str)
+                write_json_atomic(samples_path, samples_data)
                 print(f"\nSamples saved to: {samples_path}")
                 sys.stdout.flush()
 
-        with open(output_path, "w") as f:
-            json.dump(results, f, indent=2, default=str)
+        # Written last: its presence is what marks the run as complete.
+        write_json_atomic(output_path, results)
         print(f"\nResults saved to: {output_path}")
         sys.stdout.flush()
     except Exception as e:
@@ -877,8 +950,21 @@ def cleanup_multiprocessing():
 
 def main():
     # Results land straight in results/<run_name>.json — flat and easy to find.
-    # A re-run overwrites; the run's own timestamp is kept inside the JSON.
+    # A re-run skips combinations that already have a complete result (resume);
+    # --overwrite re-runs them. The run's own timestamp is kept inside the JSON.
     output_dir = exp_path / "results"
+
+    # Decide up front which combinations still need to run.
+    plan = []
+    for combo in _combinations:
+        run_name = get_run_name(combo, _config)
+        output_path = output_dir / f"{run_name}.json"
+        status = (None if _args.overwrite
+                  else completed_result_status(output_path, combo, _config))
+        # Re-run anything not complete; an existing but stale result is reported.
+        skip = not _args.overwrite and status is None
+        plan.append((combo, run_name, output_path, skip, status))
+    n_skip = sum(skip for *_, skip, _ in plan)
 
     exp_name = _config.get("experiment", {}).get("name", exp_path.name)
     print(f"\n{'='*60}")
@@ -886,32 +972,42 @@ def main():
     print(f"Precision: {_pconfig['label']}")
     print(f"Output: {output_dir}")
     print(f"Total runs: {len(_combinations)}")
+    if _args.overwrite:
+        print("Mode: --overwrite (re-running every combination)")
+    else:
+        print(f"Resume: {n_skip} already complete, "
+              f"{len(plan) - n_skip} to run (pass --overwrite to re-run all)")
     print(f"{'='*60}")
     sys.stdout.flush()
 
     run_results = []
-    for combo in _combinations:
-        run_name = get_run_name(combo, _config)
-        output_path = output_dir / f"{run_name}.json"
+    for combo, run_name, output_path, skip, status in plan:
+        if skip:
+            print(f"\n[SKIP] {run_name}: complete result exists -> {output_path.name}")
+            sys.stdout.flush()
+            run_results.append((run_name, "SKIPPED", output_path))
+            continue
+        if not _args.overwrite and status != "no result yet":
+            print(f"\n[RERUN] {run_name}: existing result not reusable ({status})")
+            sys.stdout.flush()
 
         try:
             success = run_single_combination(_config, combo, run_name, output_path)
-            run_results.append((run_name, success, output_path))
+            run_results.append((run_name, "OK" if success else "FAILED", output_path))
         except Exception as e:
             print(f"\nERROR running {run_name}: {e}")
             sys.stdout.flush()
             import traceback
             traceback.print_exc()
             sys.stdout.flush()
-            run_results.append((run_name, False, output_path))
+            run_results.append((run_name, "FAILED", output_path))
 
     print(f"\n{'='*60}")
     print("SUMMARY")
     print(f"{'='*60}")
     sys.stdout.flush()
 
-    for run_name, success, output_path in run_results:
-        status = "OK" if success else "FAILED"
+    for run_name, status, output_path in run_results:
         print(f"  [{status}] {run_name} -> {output_path.name}")
         sys.stdout.flush()
 

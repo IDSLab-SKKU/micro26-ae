@@ -116,6 +116,19 @@ README has the full step-by-step.
 - **Expected** (Figure 11, §5.4): FP8-CoFDA collapses at F=7; NVFP4-GDFS accuracy is governed by G, not F.
 - **Time:** ~10 h (FP8) + ~20 h (NVFP4).
 
+## Resuming an interrupted sweep
+
+A re-run resumes by default: `run_experiment.py` skips any combination whose
+result JSON already exists in `results/` (same sweep parameters, every task
+evaluated without error) and runs only the rest. Pass `--overwrite` to re-run
+everything and replace existing results; `--dry-run` marks each combination
+`[SKIP]` or `[RUN]`:
+
+```bash
+./run_figure6a.sh               # continue an interrupted exp2 sweep
+./run_figure6a.sh --overwrite   # start it over
+```
+
 ## GPU device selection
 
 Each `run_*.sh` passes its arguments through to the runner — append `--gpu N` to
