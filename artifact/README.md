@@ -29,7 +29,32 @@ cd micro26-ae/artifact
 ./run-docker.sh
 ```
 
-`run-docker.sh` pulls the image, mounts `artifact/` into the container.
+`run-docker.sh` pulls the image, mounts `artifact/` into the container, and
+starts it with these defaults:
+
+- **Runs as you, not root** (`--user $(id -u):$(id -g)`), so results and figures
+  written into `artifact/` are yours to edit or delete without `sudo`.
+- **Downloads go to a host cache you own:** `~/.cache/micro26-ae` (set
+  `MICRO26_AE_CACHE_DIR` to change it). Models, datasets and compile caches
+  persist there across `docker rm`.
+- **Host timezone:** the container takes your timezone (or `$TZ`), so result
+  timestamps line up with host logs. Each result's `timestamp` also records its
+  UTC offset.
+- **`HF_HUB_DISABLE_XET=1`:** downloads use the classic Hugging Face CDN (see the
+  Xet note in the [top-level README](../README.md#34-models-and-data-sets)).
+
+Running `./run-docker.sh` again re-enters the same container. A container
+created by an earlier version of the script still runs as root; recreate it to
+pick up these defaults:
+
+```bash
+docker rm micro26-ae           # the container only; your results stay in artifact/
+docker volume rm micro26-ae-hf # optional: the old root-owned model cache
+./run-docker.sh
+```
+
+Results written earlier as root can be handed back to you with
+`sudo chown -R "$(id -u):$(id -g)" .` from `artifact/`.
 
 For reference, the image
 ([`jongyeop1999/micro26-ae`](https://hub.docker.com/repository/docker/jongyeop1999/micro26-ae/general))
