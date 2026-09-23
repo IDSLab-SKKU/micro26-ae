@@ -61,8 +61,7 @@ For reference, the image
 ships the paper's software environment, so nothing needs to be built:
 
 - **vLLM prebuilt**, with the MMA-Emu kernels compiled for **Hopper (SM90)** and
-  **Blackwell (SM100 and SM120)**. SM100 (B200) support was added during artifact
-  evaluation.
+  **Blackwell (SM100 and SM120)**.
 - The native GEMM path runs on the tensor cores via **CUTLASS v4.0.0**.
 - Pinned to the environment the paper's numbers came from: torch 2.8.0 / CUDA
   12.8.1, `lm_eval==0.4.9.1`, `transformers==4.55.2`, and matplotlib for the plots.

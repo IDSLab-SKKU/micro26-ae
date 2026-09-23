@@ -59,12 +59,7 @@ because Table 6 is a cross-architecture swap test:
     - **Minimum:** Max-Q Edition
     - **Preferred:** Workstation (WS) Edition
 
-**SM100 (B200) support.** Added during artifact evaluation: the image and
-`build.sh` also target the data-center Blackwell **B200 (SM100)**, and
-`run_table6.sh` detects it. Because the emulation kernels use plain CUDA-core
-arithmetic with no architecture-specific instructions, a B200 can run the
-Blackwell (emulated-Hopper) side of Table 6. The paper's numbers were measured on
-the RTX PRO 6000, and exp2/exp3 are documented for it.
+A **B200** (Blackwell, SM100) can also run the Blackwell side of Table 6.
 
 ### 3.3 Software dependencies
 
