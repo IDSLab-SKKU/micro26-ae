@@ -35,6 +35,13 @@ so an interrupted sweep continues where it stopped. --overwrite disables this.
 import os
 import sys
 
+# Download from Hugging Face through the classic CDN rather than the Xet
+# backend (huggingface_hub 0.36, as in the image, routes large files through
+# Xet). On networks that block Xet, the safetensors shards otherwise stall at
+# 0 bytes with no error. Set before huggingface_hub is imported;
+# HF_HUB_DISABLE_XET=0 opts back in.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
 # Limit BLAS/OpenMP threads BEFORE importing numpy/scipy/sklearn
 # This prevents thread exhaustion when using multiprocessing with lm_eval
 # OpenBLAS defaults to 64 threads, which causes "Resource temporarily unavailable"
@@ -893,7 +900,8 @@ def run_single_combination(
     results["precision"] = _precision
     results["sweep_params"] = combo
     results["device"] = get_device_info()
-    results["timestamp"] = datetime.now().isoformat()
+    # Local time with its UTC offset, so it is unambiguous across machines.
+    results["timestamp"] = datetime.now().astimezone().isoformat()
     results["total_time"] = total_time
     results["mma_emu"] = emu_config
 

@@ -74,6 +74,13 @@ Both the model and the datasets are pulled from **Hugging Face** at run time.
 - **Data sets:** WikiText-2, ARC-Challenge, ARC-Easy, PIQA, WinoGrande, GSM8K, and
   HumanEval — downloaded automatically by lm-eval-harness.
 
+> **Downloads stalled at 0 bytes?** `huggingface_hub` 0.36 fetches large files
+> (the safetensors shards) through the Xet backend. On networks that block Xet,
+> those shards sit at 0 bytes with no error while the small config and tokenizer
+> files download fine. The artifact therefore sets `HF_HUB_DISABLE_XET=1` by
+> default (in `run-docker.sh` and `run_experiment.py`), which uses the classic
+> CDN. To use Xet instead, `export HF_HUB_DISABLE_XET=0` before starting.
+
 ## 4. Installation
 
 ```bash
