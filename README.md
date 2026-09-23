@@ -4,7 +4,7 @@
 > **[NADPE](https://github.com/IDSLab-SKKU/NADPE)** (*Not All Dot Products Are
 > Equal*), a vLLM fork that runs LLM inference under an arbitrary MMA
 > accumulation configuration. This repository packages the artifact for MICRO'26
-> Artifact Evaluation; for using or building on the emulator, start from NADPE.
+> Artifact Evaluation.
 
 ## 1. Abstract
 
