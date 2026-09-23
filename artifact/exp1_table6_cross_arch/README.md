@@ -66,6 +66,39 @@ so it can be checked from a script:
 | 1 | `MISMATCH` | some score or logprob differs |
 | 2 | `CANNOT COMPARE` | a result or `_samples.json` is missing, or a side ran on the wrong architecture |
 
+## Optional — more tasks
+
+This experiment intentionally evaluates the four multiple-choice benchmarks
+above. The runner can also check two more tasks, for up to **six**:
+
+| Task key | Benchmark | Metric |
+| --- | --- | --- |
+| `wikitext` | WikiText-2 | word perplexity |
+| `lambada_openai` | LAMBADA | accuracy |
+
+To add them, append the keys to the `tasks:` list in **both** configs,
+`h100/native/config.yaml` and `rtx_pro6000/emulate_hopper/config.yaml`.
+`compare.sh` only compares tasks that ran on both sides:
+
+```yaml
+eval:
+  tasks:
+    - arc_challenge
+    - arc_easy
+    - piqa
+    - winogrande
+    - wikitext         # optional
+    - lambada_openai   # optional
+```
+
+Then run steps 1–3 as above. A result that lacks a configured task is not
+reused, so `./run_table6.sh` re-runs the whole task list on each machine,
+which adds run time. `compare.sh` checks the new tasks the same way, including
+per-sample logprobs.
+
+`scripts/tasks.py` also defines GSM8K-CoT and HumanEval. They are generation
+tasks used in exp3 (Figure 11) and are not part of this experiment.
+
 ## Optional — the emulation kernels
 
 The kernels we implemented live in
