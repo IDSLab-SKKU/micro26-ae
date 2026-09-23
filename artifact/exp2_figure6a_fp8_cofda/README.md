@@ -13,7 +13,7 @@ values of **F** = **36 runs**, all emulated on the CUDA cores.
 
 ## Run the experiment
 
-Run everything below on the **RTX PRO 6000 (Blackwell)**, from this experiment's
+Run everything below on the **RTX PRO 6000 or B200 (Blackwell)**, from this experiment's
 directory `exp2_figure6a_fp8_cofda/`.
 
 **Approx. run time:** ~30 h (36 emulated runs).

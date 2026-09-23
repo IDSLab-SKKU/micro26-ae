@@ -16,7 +16,7 @@ It has two panels, both emulated on the CUDA cores:
 
 ## Run the experiment
 
-Run everything below on the **RTX PRO 6000 (Blackwell)**, from this experiment's
+Run everything below on the **RTX PRO 6000 or B200 (Blackwell)**, from this experiment's
 directory, `exp3_figure11_decode/`.
 
 **Approx. run time:** ~10 h (FP8) + ~20 h (NVFP4).
