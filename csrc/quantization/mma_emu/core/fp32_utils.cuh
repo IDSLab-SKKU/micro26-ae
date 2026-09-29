@@ -206,7 +206,7 @@ float fixed_to_fp32(int64_t mantissa_sum, int max_exp) {
     // Handle underflow to subnormal or zero
     if (biased_exp <= 0) {
         if (biased_exp < -static_cast<int>(fp32::MANTISSA_BITS)) {
-            return 0.0f;
+            return bits_to_fp32(result_sign);  // underflow keeps the sign
         }
         int subnormal_shift = 1 - biased_exp;
         uint32_t subnormal_mantissa;
