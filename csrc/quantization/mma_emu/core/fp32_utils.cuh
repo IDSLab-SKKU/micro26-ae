@@ -203,19 +203,19 @@ float fixed_to_fp32(int64_t mantissa_sum, int max_exp) {
     int final_exp = leading_one_pos + max_exp - F;
     int biased_exp = final_exp + fp32::EXPONENT_BIAS;
 
-    // Handle underflow to subnormal or zero
+    // Handle underflow to subnormal or zero (the sign is kept)
     if (biased_exp <= 0) {
-        if (biased_exp < -static_cast<int>(fp32::MANTISSA_BITS)) {
-            return bits_to_fp32(result_sign);  // underflow keeps the sign
-        }
-        int subnormal_shift = 1 - biased_exp;
+        // The subnormal field is abs_mantissa shifted right by
+        // (leading_one_pos - 23) + (1 - biased_exp)
+        const int shift = leading_one_pos - static_cast<int>(fp32::MANTISSA_BITS) +
+                          (1 - biased_exp);
         uint32_t subnormal_mantissa;
-        if (leading_one_pos >= static_cast<int>(fp32::MANTISSA_BITS)) {
-            subnormal_mantissa = static_cast<uint32_t>(
-                abs_mantissa >> (leading_one_pos - fp32::MANTISSA_BITS + subnormal_shift));
+        if (shift >= 64) {
+            subnormal_mantissa = 0;
+        } else if (shift >= 0) {
+            subnormal_mantissa = static_cast<uint32_t>(abs_mantissa >> shift);
         } else {
-            subnormal_mantissa = static_cast<uint32_t>(
-                abs_mantissa << (fp32::MANTISSA_BITS - leading_one_pos - subnormal_shift));
+            subnormal_mantissa = static_cast<uint32_t>(abs_mantissa << (-shift));
         }
         subnormal_mantissa &= fp32::MANTISSA_MASK;
         return bits_to_fp32(result_sign | subnormal_mantissa);
