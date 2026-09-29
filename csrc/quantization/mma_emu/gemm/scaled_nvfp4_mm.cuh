@@ -285,7 +285,7 @@ __global__ void mma_emu_scaled_nvfp4_mm_emu_kernel(
                 }
 
                 // STP5-7: Fused-sum accumulation over groups
-                accum[tm][tn] = gdfs_accumulate_tile<F, GROUPS_PER_TILE>(
+                accum[tm][tn] = fp4_gdfs_accumulate_tile<F, GROUPS_PER_TILE>(
                     tile_groups, accum[tm][tn]);
             }
         }
