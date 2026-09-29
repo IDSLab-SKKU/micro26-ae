@@ -370,8 +370,8 @@ fp4_gdfs_group_accumulate_predecoded(DecodedFP4Frag a_frag, DecodedFP4Frag b_fra
 // FP4 GDFS fused sum (STP5-7)
 // ============================================================================
 // gdfs_accumulate_tile, except that a zero result is always +0: the tensor
-// core returns +0 even when every group is zero and C is -0, where
-// chunked_accumulate returns C unchanged.
+// core returns +0 for a result that underflows to zero, where fixed_to_fp32
+// keeps the sign.
 template <int F, int NUM_GROUPS>
 [[nodiscard]] __device__ __forceinline__ float
 fp4_gdfs_accumulate_tile(const Operand* groups, float c) {
