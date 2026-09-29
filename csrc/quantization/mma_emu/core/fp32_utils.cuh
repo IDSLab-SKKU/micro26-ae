@@ -141,24 +141,21 @@ Operand fp32_to_operand(float val) {
         return result;
     }
 
-    // Handle subnormal
-    if (biased_exp == 0) {
+    // Subnormal: kept at exponent -126 without the implicit bit (significand
+    // below 1), as the tensor core aligns it
+    const bool subnormal = (biased_exp == 0);
+    if (subnormal) {
         if (mantissa == 0) {
             result.is_zero = true;
             return result;
         }
-        // Normalize subnormal
-        int leading_zeros = __clz(mantissa);
-        int shift = leading_zeros - 8;
-        result.exponent = fp32::MIN_NORMAL_EXP - shift;
-        mantissa = mantissa << (shift + 1);
-        mantissa &= fp32::MANTISSA_MASK;
+        result.exponent = fp32::MIN_NORMAL_EXP;
     } else {
         result.exponent = biased_exp - fp32::EXPONENT_BIAS;
     }
 
     // Convert to F-bit significand
-    uint64_t fp32_sig = fp32::IMPLICIT_BIT | mantissa;
+    uint64_t fp32_sig = subnormal ? mantissa : (fp32::IMPLICIT_BIT | mantissa);
     constexpr int SHIFT_AMOUNT = fp32::MANTISSA_BITS - F;
 
     if constexpr (SHIFT_AMOUNT >= 0) {
