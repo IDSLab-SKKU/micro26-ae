@@ -275,12 +275,13 @@ __launch_bounds__(MXFP4EmuConfig::NUM_THREADS) __global__
           const DecodedFP4Frag b_frag{&Bs_dec[local_n * BKP + g * GS]};
           GroupResult gr =
               fp4_gdfs_group_accumulate_predecoded<G, GS>(a_frag, b_frag);
-          if (gr.all_zero) {
+          int scale_idx = g / GROUPS_PER_SCALE;
+          uint8_t sfa = A_sf_s[local_m * SF_PER_TILE + scale_idx];
+          uint8_t sfb = B_sf_s[local_n * SF_PER_TILE + scale_idx];
+          // A NaN scale makes the result NaN even for an all-zero group
+          if (gr.all_zero && !e8m0::is_nan(sfa) && !e8m0::is_nan(sfb)) {
             tile_groups[g] = make_zero_operand();
           } else {
-            int scale_idx = g / GROUPS_PER_SCALE;
-            uint8_t sfa = A_sf_s[local_m * SF_PER_TILE + scale_idx];
-            uint8_t sfb = B_sf_s[local_n * SF_PER_TILE + scale_idx];
             tile_groups[g] = apply_e8m0_scales<F, G>(gr.mantissa_sum,
                                                      gr.max_exp, sfa, sfb);
           }
