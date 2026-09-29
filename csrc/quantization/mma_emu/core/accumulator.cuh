@@ -33,11 +33,14 @@ namespace mma_emu {
  *
  * @tparam F Number of fractional bits in the accumulator
  * @tparam N Number of operands to accumulate
+ * @tparam E_ZERO Exponent a zero term (zero operand or C = 0) takes part in
+ *         the max exponent with (MMA-Sim e_zero; -133 for FP32 C on Hopper and
+ *         Blackwell)
  * @param operands Array of operands to accumulate
  * @param c Running accumulator value (FP32)
  * @return New FP32 accumulator value
  */
-template<int F, int N>
+template<int F, int N, int E_ZERO = -133>
 [[nodiscard]] __device__ __forceinline__
 float chunked_accumulate(const Operand* operands, float c) {
     // Convert running accumulator to operand format
@@ -57,6 +60,7 @@ float chunked_accumulate(const Operand* operands, float c) {
     int neg_inf_count = 0;
     int max_exp = -9999;
     int non_zero_count = 0;
+    bool any_zero = c_operand.is_zero;
 
     // Check accumulator c
     if (c_operand.is_inf) {
@@ -84,6 +88,7 @@ float chunked_accumulate(const Operand* operands, float c) {
             max_exp = max(max_exp, operands[i].exponent);
             non_zero_count++;
         }
+        any_zero |= operands[i].is_zero;
     }
 
     // Handle NaN: any NaN input produces NaN output
@@ -102,6 +107,9 @@ float chunked_accumulate(const Operand* operands, float c) {
     // All terms zero: the tensor core returns +0, even for C = -0
     if (non_zero_count == 0) {
         return 0.0f;
+    }
+    if (any_zero) {
+        max_exp = max(max_exp, E_ZERO);
     }
 
     // ========================================
@@ -142,11 +150,12 @@ float chunked_accumulate(const Operand* operands, float c) {
  *
  * @tparam F Fractional bits F
  * @tparam CHUNK_SIZE Products per CoFDA chunk (CS)
+ * @tparam E_ZERO Exponent of a zero term (see chunked_accumulate)
  * @param products Array of FP8 products
  * @param c Running FP32 accumulator
  * @return New FP32 accumulator value
  */
-template<int F, int CHUNK_SIZE>
+template<int F, int CHUNK_SIZE, int E_ZERO = -133>
 [[nodiscard]] __device__ __forceinline__
 float fda_accumulate_chunk(const Product* products, float c = 0.0f) {
     // Convert products to operands
@@ -162,7 +171,7 @@ float fda_accumulate_chunk(const Product* products, float c = 0.0f) {
         operands[i].is_inf = products[i].is_inf;
     }
 
-    return chunked_accumulate<F, CHUNK_SIZE>(operands, c);
+    return chunked_accumulate<F, CHUNK_SIZE, E_ZERO>(operands, c);
 }
 
 // ============================================================================
@@ -231,11 +240,14 @@ float cofda_decoupled_accumulate_products(const Product* products, float c = 0.0
  * @param groups Array of scaled group operands
  * @param c Running FP32 accumulator
  * @return New FP32 accumulator value
+ *
+ * Zero groups take part in the max exponent with e_zero = -139, as in the
+ * m16n8k64 block-scale MMA.
  */
 template<int F, int NUM_GROUPS>
 [[nodiscard]] __device__ __forceinline__
 float gdfs_accumulate_tile(const Operand* groups, float c) {
-    return chunked_accumulate<F, NUM_GROUPS>(groups, c);
+    return chunked_accumulate<F, NUM_GROUPS, -139>(groups, c);
 }
 
 // ============================================================================
