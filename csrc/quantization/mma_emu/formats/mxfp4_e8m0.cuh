@@ -71,7 +71,6 @@ bool is_nan(uint8_t val) {
  * Returns unbiased exponent: val - 127
  *
  * Note: val=0 represents 2^(-127), not zero.
- * GPU hardware may treat val=0 as zero for practical purposes.
  */
 [[nodiscard]] __device__ __forceinline__
 int to_exponent(uint8_t val) {
@@ -102,7 +101,12 @@ int to_exponent(uint8_t val) {
  *
  *   Result significand: mantissa_sum shifted from G radix to F radix
  *     SHIFT_TO_F = F - G  (vs F - (G + 6) for UE4M3)
- *   Result exponent: max_exp + (sfa_exp - 127) + (sfb_exp - 127)
+ *   Result exponent: (sfa_exp - 127) + (sfb_exp - 127)
+ *
+ * The operand exponent is the group label, without max_exp: the tensor core
+ * aligns groups (and C) to max(e_c, label), so max_exp (0..4 for E2M1
+ * products) is folded into the significand instead. A group whose products
+ * cancel to zero keeps its label and still takes part in that max.
  *
  * @tparam F Fractional bits F
  * @tparam G GDFS intra-group bits G
@@ -131,26 +135,6 @@ Operand apply_e8m0_scales(int64_t mantissa_sum, int max_exp,
 
     result.is_nan = false;
     result.is_inf = false;
-
-    // Handle zero mantissa_sum
-    if (mantissa_sum == 0) {
-        result.is_zero = true;
-        result.sign = 1;
-        result.exponent = 0;
-        result.significand = 0;
-        return result;
-    }
-
-    // Handle E8M0 value 0 (2^-127) as zero contribution
-    // GPU hardware treats E8M0=0 as effectively zero scale factor
-    if (sfa == 0 || sfb == 0) {
-        result.is_zero = true;
-        result.sign = 1;
-        result.exponent = 0;
-        result.significand = 0;
-        return result;
-    }
-
     result.is_zero = false;
 
     // Determine sign and get absolute value
@@ -162,18 +146,19 @@ Operand apply_e8m0_scales(int64_t mantissa_sum, int max_exp,
     }
 
     // E8M0 is pure power-of-2: no mantissa multiplication needed.
-    // Just shift the significand from G radix to F radix.
+    // Fold in max_exp and shift the significand from G radix to F radix.
     constexpr int SHIFT_TO_F = F - G;
+    const uint64_t shifted_sum = static_cast<uint64_t>(mantissa_sum) << max_exp;
 
     if constexpr (SHIFT_TO_F >= 0) {
-        result.significand = static_cast<uint64_t>(mantissa_sum) << SHIFT_TO_F;
+        result.significand = shifted_sum << SHIFT_TO_F;
     } else {
-        result.significand = static_cast<uint64_t>(mantissa_sum) >> (-SHIFT_TO_F);
+        result.significand = shifted_sum >> (-SHIFT_TO_F);
     }
 
-    // Combined exponent: max_exp + unbiased_sfa + unbiased_sfb
+    // Group label: unbiased_sfa + unbiased_sfb
     int combined_sf_exp = e8m0::to_exponent(sfa) + e8m0::to_exponent(sfb);
-    result.exponent = max_exp + combined_sf_exp;
+    result.exponent = combined_sf_exp;
 
     return result;
 }
@@ -222,9 +207,8 @@ Operand fp4_product_with_e8m0_scales(FP4Components a, FP4Components b,
         return result;
     }
 
-    // Handle zero inputs or zero scale factors
-    // E8M0 value 0 represents 2^-127, treated as zero for practical purposes
-    if (a.is_zero || b.is_zero || sfa == 0 || sfb == 0) {
+    // Handle zero inputs (E8M0 value 0 is 2^-127, not a zero scale)
+    if (a.is_zero || b.is_zero) {
         result.is_zero = true;
         result.sign = 1;
         result.exponent = 0;

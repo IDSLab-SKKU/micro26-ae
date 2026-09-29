@@ -286,8 +286,8 @@ __launch_bounds__(MXFP4EmuConfig::NUM_THREADS) __global__
           }
         }
 
-        accum[tm][tn] = gdfs_accumulate_tile<F, GROUPS_PER_TILE>(tile_groups,
-                                                                 accum[tm][tn]);
+        accum[tm][tn] = fp4_gdfs_accumulate_tile<F, GROUPS_PER_TILE>(tile_groups,
+                                                                     accum[tm][tn]);
       }
     }
 

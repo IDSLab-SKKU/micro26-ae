@@ -51,9 +51,14 @@ bool is_nan(uint8_t val) {
  * Arithmetic:
  *   γ_g = σ_g × sfa × sfb
  *       = mantissa_sum × 2^(max_exp - G) × (sig_sfa/8 × 2^exp_sfa) × (sig_sfb/8 × 2^exp_sfb)
- *       = (mantissa_sum × sig_sfa × sig_sfb) × 2^(max_exp + exp_sfa + exp_sfb - G - 6)
+ *       = (mantissa_sum × sig_sfa × sig_sfb × 2^max_exp) × 2^(exp_sfa + exp_sfb - G - 6)
  *   COMBINED_RADIX = G + 6
  *   SHIFT_TO_F = F - (G + 6)
+ *
+ * The operand exponent is the group label exp_sfa + exp_sfb, without max_exp:
+ * the tensor core aligns groups (and C) to max(e_c, label), so max_exp (0..4
+ * for E2M1 products) is folded into the significand instead. A group whose
+ * products cancel to zero keeps its label and still takes part in that max.
  *
  * @tparam F Fractional bits F
  * @tparam G GDFS intra-group bits G
@@ -86,15 +91,6 @@ Operand apply_ue4m3_scales(int64_t mantissa_sum, int max_exp,
 
     result.is_nan = false;
     result.is_inf = false;
-
-    // Handle zero mantissa_sum
-    if (mantissa_sum == 0) {
-        result.is_zero = true;
-        result.sign = 1;
-        result.exponent = 0;
-        result.significand = 0;
-        return result;
-    }
 
     // Handle UE4M3 value 0 as zero scale
     if (sfa_masked == 0 || sfb_masked == 0) {
@@ -149,9 +145,9 @@ Operand apply_ue4m3_scales(int64_t mantissa_sum, int max_exp,
     int64_t sf_product = sig_a * sig_b;
     int combined_sf_exp = unbiased_exp_a + unbiased_exp_b;
 
-    // Multiply mantissa_sum (radix at G) by sf_product (radix at 6)
-    // Result radix = G + 6
-    int64_t scaled_sum = mantissa_sum * sf_product;
+    // Multiply mantissa_sum (radix at G) by sf_product (radix at 6) and fold
+    // in max_exp. Result radix = G + 6
+    int64_t scaled_sum = (mantissa_sum * sf_product) << max_exp;
 
     // Convert to F-bit significand format
     constexpr int COMBINED_RADIX = G + 6;
@@ -162,7 +158,7 @@ Operand apply_ue4m3_scales(int64_t mantissa_sum, int max_exp,
     } else {
         result.significand = scaled_sum >> (-SHIFT_TO_F);
     }
-    result.exponent = max_exp + combined_sf_exp;
+    result.exponent = combined_sf_exp;
 
     return result;
 }
