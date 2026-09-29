@@ -26,6 +26,11 @@ if docker container inspect "$CONTAINER" >/dev/null 2>&1; then
         echo "NOTE: '$CONTAINER' was created by an older run-docker.sh and runs as root," >&2
         echo "      so its outputs are root-owned. To recreate it: docker rm $CONTAINER" >&2
     fi
+    existing_image="$(docker container inspect -f '{{.Config.Image}}' "$CONTAINER")"
+    if [[ "$existing_image" != "$IMAGE" ]]; then
+        echo "NOTE: '$CONTAINER' runs $existing_image, not $IMAGE." >&2
+        echo "      To recreate it from $IMAGE: docker rm $CONTAINER" >&2
+    fi
     echo "Re-entering existing container '$CONTAINER'."
     exec docker start --attach --interactive "$CONTAINER"
 fi
