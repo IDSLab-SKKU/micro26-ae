@@ -141,24 +141,21 @@ Operand fp32_to_operand(float val) {
         return result;
     }
 
-    // Handle subnormal
-    if (biased_exp == 0) {
+    // Subnormal: kept at exponent -126 without the implicit bit (significand
+    // below 1), as the tensor core aligns it
+    const bool subnormal = (biased_exp == 0);
+    if (subnormal) {
         if (mantissa == 0) {
             result.is_zero = true;
             return result;
         }
-        // Normalize subnormal
-        int leading_zeros = __clz(mantissa);
-        int shift = leading_zeros - 8;
-        result.exponent = fp32::MIN_NORMAL_EXP - shift;
-        mantissa = mantissa << (shift + 1);
-        mantissa &= fp32::MANTISSA_MASK;
+        result.exponent = fp32::MIN_NORMAL_EXP;
     } else {
         result.exponent = biased_exp - fp32::EXPONENT_BIAS;
     }
 
     // Convert to F-bit significand
-    uint64_t fp32_sig = fp32::IMPLICIT_BIT | mantissa;
+    uint64_t fp32_sig = subnormal ? mantissa : (fp32::IMPLICIT_BIT | mantissa);
     constexpr int SHIFT_AMOUNT = fp32::MANTISSA_BITS - F;
 
     if constexpr (SHIFT_AMOUNT >= 0) {
@@ -206,21 +203,37 @@ float fixed_to_fp32(int64_t mantissa_sum, int max_exp) {
     int final_exp = leading_one_pos + max_exp - F;
     int biased_exp = final_exp + fp32::EXPONENT_BIAS;
 
+    // Final truncation to F fractional bits (round-to-zero), for normal and
+    // subnormal results alike
+    // For F < 23: truncate at F-th fractional bit
+    // For F >= 23: truncate at 23rd fractional bit (FP32 mantissa width)
+    constexpr int EFFECTIVE_TRUNC_POINT = (F < static_cast<int>(fp32::MANTISSA_BITS))
+                                           ? F
+                                           : static_cast<int>(fp32::MANTISSA_BITS);
+    constexpr int FINAL_TRUNC_BITS = fp32::MANTISSA_BITS - EFFECTIVE_TRUNC_POINT;
+    constexpr uint32_t FINAL_TRUNC_MASK =
+        fp32::MANTISSA_MASK & (~((1u << FINAL_TRUNC_BITS) - 1));
+
     // Handle underflow to subnormal or zero
     if (biased_exp <= 0) {
-        if (biased_exp < -static_cast<int>(fp32::MANTISSA_BITS)) {
+        // The subnormal field is abs_mantissa shifted right by
+        // (leading_one_pos - 23) + (1 - biased_exp)
+        const int shift = leading_one_pos - static_cast<int>(fp32::MANTISSA_BITS) +
+                          (1 - biased_exp);
+        uint32_t subnormal_mantissa;
+        if (shift >= 64) {
+            subnormal_mantissa = 0;
+        } else if (shift >= 0) {
+            subnormal_mantissa = static_cast<uint32_t>(abs_mantissa >> shift);
+        } else {
+            subnormal_mantissa = static_cast<uint32_t>(abs_mantissa << (-shift));
+        }
+        subnormal_mantissa &= FINAL_TRUNC_MASK;
+        // A result that truncates to zero is +0, as on the tensor core; a
+        // non-zero subnormal keeps its sign
+        if (subnormal_mantissa == 0) {
             return 0.0f;
         }
-        int subnormal_shift = 1 - biased_exp;
-        uint32_t subnormal_mantissa;
-        if (leading_one_pos >= static_cast<int>(fp32::MANTISSA_BITS)) {
-            subnormal_mantissa = static_cast<uint32_t>(
-                abs_mantissa >> (leading_one_pos - fp32::MANTISSA_BITS + subnormal_shift));
-        } else {
-            subnormal_mantissa = static_cast<uint32_t>(
-                abs_mantissa << (fp32::MANTISSA_BITS - leading_one_pos - subnormal_shift));
-        }
-        subnormal_mantissa &= fp32::MANTISSA_MASK;
         return bits_to_fp32(result_sign | subnormal_mantissa);
     }
 
@@ -238,19 +251,7 @@ float fixed_to_fp32(int64_t mantissa_sum, int max_exp) {
         normalized_mantissa = static_cast<uint32_t>(
             abs_mantissa << (fp32::MANTISSA_BITS - leading_one_pos));
     }
-    normalized_mantissa &= fp32::MANTISSA_MASK;
-
-    // Final truncation to F fractional bits (round-to-zero)
-    // For F < 23: truncate at F-th fractional bit
-    // For F >= 23: truncate at 23rd fractional bit (FP32 mantissa width)
-    constexpr int EFFECTIVE_TRUNC_POINT = (F < static_cast<int>(fp32::MANTISSA_BITS))
-                                           ? F
-                                           : static_cast<int>(fp32::MANTISSA_BITS);
-    constexpr int FINAL_TRUNC_BITS = fp32::MANTISSA_BITS - EFFECTIVE_TRUNC_POINT;
-    if constexpr (FINAL_TRUNC_BITS > 0) {
-        constexpr uint32_t FINAL_TRUNC_MASK = fp32::MANTISSA_MASK & (~((1u << FINAL_TRUNC_BITS) - 1));
-        normalized_mantissa &= FINAL_TRUNC_MASK;
-    }
+    normalized_mantissa &= FINAL_TRUNC_MASK;
 
     // Assemble final result
     unsigned int result_bits = result_sign |

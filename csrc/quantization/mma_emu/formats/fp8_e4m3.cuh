@@ -554,8 +554,8 @@ Operand group_to_operand_fp8(int64_t mantissa_sum, int max_exp) {
 // Pass 2 aligns + sums an int64 mantissa, normalized via fixed_to_fp32<F>.
 // Products are streamed through registers and recomputed in Pass 2 from the
 // pre-decoded operands. Caller guarantees CHUNK_SIZE valid (zero-padded) elems.
-// Bitwise-equivalent to fp8_multiply<F> + fda_accumulate_chunk<F, CHUNK_SIZE>.
-template <int F, int CHUNK_SIZE>
+// Bitwise-equivalent to fp8_multiply<F> + fda_accumulate_chunk<F, CHUNK_SIZE, E_ZERO>.
+template <int F, int CHUNK_SIZE, int E_ZERO = -133>
 [[nodiscard]] __device__ __forceinline__ float
 fp8_cofda_mma(DecodedFrag a_frag, DecodedFrag b_frag, float c) {
     Operand c_operand = fp32_to_operand<F>(c);
@@ -570,6 +570,7 @@ fp8_cofda_mma(DecodedFrag a_frag, DecodedFrag b_frag, float c) {
     int neg_inf_count = 0;
     int max_exp = -9999;
     int non_zero_count = 0;
+    bool any_zero = c_operand.is_zero;
 
     if (c_operand.is_inf) {
         any_inf = true;
@@ -594,6 +595,7 @@ fp8_cofda_mma(DecodedFrag a_frag, DecodedFrag b_frag, float c) {
             max_exp = max(max_exp, p.exponent);
             non_zero_count++;
         }
+        any_zero |= p.is_zero;
     }
 
     if (any_nan) {
@@ -606,8 +608,11 @@ fp8_cofda_mma(DecodedFrag a_frag, DecodedFrag b_frag, float c) {
         return bits_to_fp32(pos_inf_count > 0 ? fp32::POS_INF_BITS
                                               : fp32::NEG_INF_BITS);
     }
-    if (non_zero_count == 0) {
-        return c;
+    if (non_zero_count == 0) {  // all terms zero: +0, even for C = -0
+        return 0.0f;
+    }
+    if (any_zero) {  // zero terms take part in max_exp with E_ZERO
+        max_exp = max(max_exp, E_ZERO);
     }
 
     // ---- Pass 2: align + sum (recompute products in-place) ----

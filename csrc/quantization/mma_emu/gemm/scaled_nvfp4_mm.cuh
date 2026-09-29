@@ -273,19 +273,20 @@ __global__ void mma_emu_scaled_nvfp4_mm_emu_kernel(
                     const DecodedFP4Frag b_frag{&Bs_dec[local_n * BKP + g * GS]};
                     GroupResult gr =
                         fp4_gdfs_group_accumulate_predecoded<G, GS>(a_frag, b_frag);
-                    if (gr.all_zero) {
+                    int scale_idx = g / GROUPS_PER_SCALE;
+                    uint8_t sfa = A_sf_s[local_m * SF_PER_TILE + scale_idx];
+                    uint8_t sfb = B_sf_s[local_n * SF_PER_TILE + scale_idx];
+                    // A NaN scale makes the result NaN even for an all-zero group
+                    if (gr.all_zero && !ue4m3::is_nan(sfa) && !ue4m3::is_nan(sfb)) {
                         tile_groups[g] = make_zero_operand();
                     } else {
-                        int scale_idx = g / GROUPS_PER_SCALE;
-                        uint8_t sfa = A_sf_s[local_m * SF_PER_TILE + scale_idx];
-                        uint8_t sfb = B_sf_s[local_n * SF_PER_TILE + scale_idx];
                         tile_groups[g] = apply_ue4m3_scales<F, G>(
                             gr.mantissa_sum, gr.max_exp, sfa, sfb);
                     }
                 }
 
                 // STP5-7: Fused-sum accumulation over groups
-                accum[tm][tn] = fp4_gdfs_accumulate_tile<F, GROUPS_PER_TILE>(
+                accum[tm][tn] = gdfs_accumulate_tile<F, GROUPS_PER_TILE>(
                     tile_groups, accum[tm][tn]);
             }
         }
