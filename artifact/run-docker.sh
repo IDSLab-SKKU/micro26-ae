@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-IMAGE="${MICRO26_AE_IMAGE:-docker.io/jongyeop1999/micro26-ae:v1}"
+IMAGE="${MICRO26_AE_IMAGE:-docker.io/jongyeop1999/micro26-ae:v2}"
 CONTAINER="${MICRO26_AE_CONTAINER:-micro26-ae}"
 CACHE_DIR="${MICRO26_AE_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/micro26-ae}"
 
