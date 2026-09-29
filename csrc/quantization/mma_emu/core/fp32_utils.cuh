@@ -203,6 +203,17 @@ float fixed_to_fp32(int64_t mantissa_sum, int max_exp) {
     int final_exp = leading_one_pos + max_exp - F;
     int biased_exp = final_exp + fp32::EXPONENT_BIAS;
 
+    // Final truncation to F fractional bits (round-to-zero), for normal and
+    // subnormal results alike
+    // For F < 23: truncate at F-th fractional bit
+    // For F >= 23: truncate at 23rd fractional bit (FP32 mantissa width)
+    constexpr int EFFECTIVE_TRUNC_POINT = (F < static_cast<int>(fp32::MANTISSA_BITS))
+                                           ? F
+                                           : static_cast<int>(fp32::MANTISSA_BITS);
+    constexpr int FINAL_TRUNC_BITS = fp32::MANTISSA_BITS - EFFECTIVE_TRUNC_POINT;
+    constexpr uint32_t FINAL_TRUNC_MASK =
+        fp32::MANTISSA_MASK & (~((1u << FINAL_TRUNC_BITS) - 1));
+
     // Handle underflow to subnormal or zero (the sign is kept)
     if (biased_exp <= 0) {
         // The subnormal field is abs_mantissa shifted right by
@@ -217,7 +228,7 @@ float fixed_to_fp32(int64_t mantissa_sum, int max_exp) {
         } else {
             subnormal_mantissa = static_cast<uint32_t>(abs_mantissa << (-shift));
         }
-        subnormal_mantissa &= fp32::MANTISSA_MASK;
+        subnormal_mantissa &= FINAL_TRUNC_MASK;
         return bits_to_fp32(result_sign | subnormal_mantissa);
     }
 
@@ -235,19 +246,7 @@ float fixed_to_fp32(int64_t mantissa_sum, int max_exp) {
         normalized_mantissa = static_cast<uint32_t>(
             abs_mantissa << (fp32::MANTISSA_BITS - leading_one_pos));
     }
-    normalized_mantissa &= fp32::MANTISSA_MASK;
-
-    // Final truncation to F fractional bits (round-to-zero)
-    // For F < 23: truncate at F-th fractional bit
-    // For F >= 23: truncate at 23rd fractional bit (FP32 mantissa width)
-    constexpr int EFFECTIVE_TRUNC_POINT = (F < static_cast<int>(fp32::MANTISSA_BITS))
-                                           ? F
-                                           : static_cast<int>(fp32::MANTISSA_BITS);
-    constexpr int FINAL_TRUNC_BITS = fp32::MANTISSA_BITS - EFFECTIVE_TRUNC_POINT;
-    if constexpr (FINAL_TRUNC_BITS > 0) {
-        constexpr uint32_t FINAL_TRUNC_MASK = fp32::MANTISSA_MASK & (~((1u << FINAL_TRUNC_BITS) - 1));
-        normalized_mantissa &= FINAL_TRUNC_MASK;
-    }
+    normalized_mantissa &= FINAL_TRUNC_MASK;
 
     // Assemble final result
     unsigned int result_bits = result_sign |
