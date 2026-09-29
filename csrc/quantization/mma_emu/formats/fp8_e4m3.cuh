@@ -606,8 +606,8 @@ fp8_cofda_mma(DecodedFrag a_frag, DecodedFrag b_frag, float c) {
         return bits_to_fp32(pos_inf_count > 0 ? fp32::POS_INF_BITS
                                               : fp32::NEG_INF_BITS);
     }
-    if (non_zero_count == 0) {
-        return c;
+    if (non_zero_count == 0) {  // all terms zero: +0, even for C = -0
+        return 0.0f;
     }
 
     // ---- Pass 2: align + sum (recompute products in-place) ----

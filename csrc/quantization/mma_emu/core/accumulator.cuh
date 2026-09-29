@@ -99,9 +99,9 @@ float chunked_accumulate(const Operand* operands, float c) {
         return bits_to_fp32(pos_inf_count > 0 ? fp32::POS_INF_BITS : fp32::NEG_INF_BITS);
     }
 
-    // If all operands are zero, return the original accumulator
+    // All terms zero: the tensor core returns +0, even for C = -0
     if (non_zero_count == 0) {
-        return c;
+        return 0.0f;
     }
 
     // ========================================
