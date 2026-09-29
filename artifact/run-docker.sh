@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-IMAGE="${MICRO26_AE_IMAGE:-docker.io/jongyeop1999/micro26-ae:v1}"
+IMAGE="${MICRO26_AE_IMAGE:-docker.io/jongyeop1999/micro26-ae:v2}"
 CONTAINER="${MICRO26_AE_CONTAINER:-micro26-ae}"
 CACHE_DIR="${MICRO26_AE_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/micro26-ae}"
 
@@ -25,6 +25,11 @@ if docker container inspect "$CONTAINER" >/dev/null 2>&1; then
     if [[ -z "$(docker container inspect -f '{{.Config.User}}' "$CONTAINER")" ]]; then
         echo "NOTE: '$CONTAINER' was created by an older run-docker.sh and runs as root," >&2
         echo "      so its outputs are root-owned. To recreate it: docker rm $CONTAINER" >&2
+    fi
+    existing_image="$(docker container inspect -f '{{.Config.Image}}' "$CONTAINER")"
+    if [[ "$existing_image" != "$IMAGE" ]]; then
+        echo "NOTE: '$CONTAINER' runs $existing_image, not $IMAGE." >&2
+        echo "      To recreate it from $IMAGE: docker rm $CONTAINER" >&2
     fi
     echo "Re-entering existing container '$CONTAINER'."
     exec docker start --attach --interactive "$CONTAINER"
