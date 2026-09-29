@@ -214,7 +214,7 @@ float fixed_to_fp32(int64_t mantissa_sum, int max_exp) {
     constexpr uint32_t FINAL_TRUNC_MASK =
         fp32::MANTISSA_MASK & (~((1u << FINAL_TRUNC_BITS) - 1));
 
-    // Handle underflow to subnormal or zero (the sign is kept)
+    // Handle underflow to subnormal or zero
     if (biased_exp <= 0) {
         // The subnormal field is abs_mantissa shifted right by
         // (leading_one_pos - 23) + (1 - biased_exp)
@@ -229,6 +229,11 @@ float fixed_to_fp32(int64_t mantissa_sum, int max_exp) {
             subnormal_mantissa = static_cast<uint32_t>(abs_mantissa << (-shift));
         }
         subnormal_mantissa &= FINAL_TRUNC_MASK;
+        // A result that truncates to zero is +0, as on the tensor core; a
+        // non-zero subnormal keeps its sign
+        if (subnormal_mantissa == 0) {
+            return 0.0f;
+        }
         return bits_to_fp32(result_sign | subnormal_mantissa);
     }
 
